@@ -273,6 +273,8 @@ The E2B backend treats the image reference as a template id and does not check l
 
 ## Workspace browser: watch and take over the agent's browser
 
+> The full guide (usage, implementation, deployment, limits, troubleshooting) is in [docs/browser-preview.md](docs/browser-preview.md).
+
 Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Browser preview" tab of dsh's right sidebar ("浏览器预览" in Chinese, following dsh's language setting), where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent. The tab opens by itself (expanding a collapsed sidebar) when the agent starts operating the browser.
 
 ```

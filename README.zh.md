@@ -272,6 +272,8 @@ E2B 后端把镜像地址当作 template id，不做标签检查，需要自己�
 
 ## 工作空间浏览器：实时查看并接管 agent 的浏览器
 
+> 完整说明（使用、实现、部署、限制、故障排查）见 [docs/browser-preview.zh.md](docs/browser-preview.zh.md)。
+
 每个工作空间有一个常驻的 Chromium，agent 和用户操作的是**同一个浏览器**：agent 通过 Playwright MCP 操作它，用户在 dsh 右侧边栏的「浏览器预览」标签（英文界面为 Browser preview，跟随 dsh 的语言设置）里实时看到画面，可以随时点击、输入（包括中文）、切换标签页和跳转，比如替 agent 完成登录。agent 一开始操作浏览器，这个标签就会自动打开（右侧边栏收起时也会展开）。
 
 ```
