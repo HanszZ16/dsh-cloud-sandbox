@@ -4,14 +4,16 @@ import { api, type Group, type Plugin } from '../../api.ts'
 import { errorMessage, Field, formatDuration, Modal } from '../../ui.tsx'
 import { Loading, useLoad } from '../Admin.tsx'
 import { PluginPicker } from './Plugins.tsx'
+import { RestartHint, RestartPrompt, runningAffected } from './RestartPrompt.tsx'
 
 export function GroupsSection({ showToast }: { showToast: (m: string) => void }) {
   const load = useCallback(async () => {
-    const [groups, plugins] = await Promise.all([api.groups(), api.plugins()])
-    return { groups, plugins }
+    const [groups, plugins, users] = await Promise.all([api.groups(), api.plugins(), api.users()])
+    return { groups, plugins, users }
   }, [])
   const { data, error, reload } = useLoad(load)
   const [editing, setEditing] = useState<Group | 'new' | null>(null)
+  const [restart, setRestart] = useState<string[]>([])
 
   if (!data) return <Loading error={error} />
   const pluginName = new Map(data.plugins.map((p) => [p.id, p.name]))
@@ -87,12 +89,15 @@ export function GroupsSection({ showToast }: { showToast: (m: string) => void })
           plugins={data.plugins}
           onClose={() => setEditing(null)}
           onSaved={(message) => {
+            const affected = editing === 'new' ? [] : runningAffected(data.users, data.groups, { groupId: editing.id })
             setEditing(null)
             showToast(message)
+            setRestart(affected)
             reload()
           }}
         />
       ) : null}
+      {restart.length ? <RestartPrompt usernames={restart} onClose={() => setRestart([])} showToast={showToast} /> : null}
     </div>
   )
 }
@@ -194,6 +199,11 @@ function GroupEditor({
           <span>默认插件</span>
           <PluginPicker plugins={plugins} selected={pluginIds} onChange={setPluginIds} />
         </div>
+        {group ? (
+          <div className="wide">
+            <RestartHint />
+          </div>
+        ) : null}
         {error ? <div className="error-text wide">{error}</div> : null}
       </div>
     </Modal>

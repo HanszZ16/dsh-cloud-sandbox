@@ -14,6 +14,7 @@ export function FishLogo({ size = 24 }: { size?: number }) {
 const STATUS_LABEL: Record<SandboxStatus, string> = {
   running: '运行中',
   starting: '启动中',
+  releasing: '正在保存',
   stopped: '未运行',
   failed: '启动失败',
 }
@@ -42,7 +43,7 @@ export function Modal({
   title: string
   children: ReactNode
   onClose: () => void
-  footer: ReactNode
+  footer: ReactNode | null
   width?: number
 }) {
   useEffect(() => {
@@ -58,7 +59,7 @@ export function Modal({
       <div className="modal" style={width ? { maxWidth: width } : undefined}>
         <header>{title}</header>
         <div className="body">{children}</div>
-        <footer>{footer}</footer>
+        {footer ? <footer>{footer}</footer> : <div style={{ height: 20 }} />}
       </div>
     </div>
   )

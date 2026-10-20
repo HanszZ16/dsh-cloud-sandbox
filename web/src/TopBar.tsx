@@ -1,16 +1,17 @@
+import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
-import { api } from './api.ts'
 import { useSession } from './App.tsx'
+import { ExitDialog } from './ExitDialog.tsx'
 import { FishLogo } from './ui.tsx'
 
 export function TopBar({ section }: { section?: string }) {
   const { me, refresh } = useSession()
   const navigate = useNavigate()
+  const [exiting, setExiting] = useState(false)
   if (!me) return null
 
-  async function logout() {
-    await api.logout()
+  async function done() {
     await refresh()
     navigate('/login', { replace: true })
   }
@@ -31,10 +32,11 @@ export function TopBar({ section }: { section?: string }) {
         <span className="avatar" title={me.username}>
           {(me.display_name || me.username).slice(0, 1).toUpperCase()}
         </span>
-        <button className="btn ghost sm" onClick={logout} title="退出时保存数据并释放云电脑">
-          退出
+        <button className="btn ghost sm" onClick={() => setExiting(true)} title="保存数据并释放云电脑，然后退出登录">
+          保存并退出
         </button>
       </div>
+      {exiting ? <ExitDialog onClose={() => setExiting(false)} onDone={done} /> : null}
     </header>
   )
 }

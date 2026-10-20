@@ -9,12 +9,22 @@ backend SDK directly, so Docker, E2B, or a Kubernetes pool are interchangeable.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 # Archive names a backend produces and accepts. Each is a tar of one directory,
 # rooted at that directory's name. "home" is /home/agent: dsh state (DSH_HOME),
 # projects, user-level packages, and dotfiles.
 STATE_PARTS: tuple[str, ...] = ("home",)
+
+# Reports the step a start or capture has reached. Start steps: "create",
+# "restore", "boot"; capture steps: "stop", "archive". The portal shows them
+# as a progress bar.
+Progress = Callable[[str], None]
+
+
+def no_progress(_step: str) -> None:
+    """Default Progress for callers that do not report."""
 
 
 @dataclass(frozen=True)
@@ -56,7 +66,7 @@ class SandboxBackend(ABC):
     name: str
 
     @abstractmethod
-    async def start(self, spec: SandboxSpec) -> SandboxHandle:
+    async def start(self, spec: SandboxSpec, progress: Progress = no_progress) -> SandboxHandle:
         """Create the machine, restore state, start dsh Web, and return once it listens."""
 
     @abstractmethod
@@ -64,7 +74,7 @@ class SandboxBackend(ABC):
         """Return the tokenized URL dsh printed at startup (its --public-url plus ?token=)."""
 
     @abstractmethod
-    async def capture(self, handle: SandboxHandle) -> dict[str, bytes]:
+    async def capture(self, handle: SandboxHandle, progress: Progress = no_progress) -> dict[str, bytes]:
         """Stop dsh so its stores are quiescent, then return one archive per STATE_PARTS name."""
 
     @abstractmethod

@@ -1,50 +1,19 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useState } from 'react'
 
 import { api, type SandboxInfo } from '../api.ts'
 import { useSession } from '../App.tsx'
+import { ProgressBar } from '../ExitDialog.tsx'
+import { useSandbox } from '../sandbox.ts'
 import { TopBar } from '../TopBar.tsx'
-import { errorMessage, Field, formatDuration, Spinner, StatusBadge, useToast } from '../ui.tsx'
+import { errorMessage, Field, formatDuration, StatusBadge, useToast } from '../ui.tsx'
 
 const KIND_LABEL = { bundle: '插件', mcp: 'MCP', patch: '配置' } as const
 
 export function PortalPage() {
   const { me, refresh } = useSession()
-  const [sandbox, setSandbox] = useState<SandboxInfo | null>(me?.sandbox ?? null)
   const [toast, showToast] = useToast()
 
-  // Opening the portal starts the sandbox, so "进入" is usually instant.
-  useEffect(() => {
-    api.startSandbox().then(setSandbox, (err) => showToast(errorMessage(err)))
-  }, [showToast])
-
-  useEffect(() => {
-    if (sandbox?.status !== 'starting') return
-    const timer = window.setInterval(() => {
-      api.sandbox().then(setSandbox, () => undefined)
-    }, 1500)
-    return () => window.clearInterval(timer)
-  }, [sandbox?.status])
-
   if (!me) return null
-  const status = sandbox?.status ?? 'stopped'
-
-  async function release() {
-    try {
-      setSandbox(await api.releaseSandbox())
-      showToast('已保存数据并释放云电脑')
-    } catch (err) {
-      showToast(errorMessage(err))
-    }
-  }
-
-  async function start() {
-    try {
-      setSandbox(await api.startSandbox())
-    } catch (err) {
-      showToast(errorMessage(err))
-    }
-  }
-
   const quota = me.quota
   const used = quota.daily_request_limit ? Math.min(1, quota.requests_today / quota.daily_request_limit) : 0
 
@@ -55,54 +24,11 @@ export function PortalPage() {
         <div>
           <h1>你好，{me.display_name || me.username}</h1>
           <div className="muted">
-            用户组 {me.group_name} · 你的会话、文件、记忆和自己安装的插件都会保存，下次登录自动恢复。
+            用户组 {me.group_name} · 你的会话、文件、记忆和自己安装的插件都会保存，下次启动自动恢复。
           </div>
         </div>
 
-        <section className="card hero">
-          <div>
-            <div className="row">
-              <h3 style={{ margin: 0 }}>我的云电脑</h3>
-              <StatusBadge status={status} />
-            </div>
-            <div className="hero-meta">
-              {status === 'running' ? (
-                <>
-                  <span>已运行 {formatDuration(sandbox?.uptime_s)}</span>
-                  <span>空闲 {formatDuration(sandbox?.idle_s)}</span>
-                  <span>连接 {sandbox?.connections ?? 0} 个</span>
-                  <span>空闲 {formatDuration(sandbox?.idle_timeout_s)} 后自动保存并释放</span>
-                </>
-              ) : status === 'starting' ? (
-                <span>正在准备环境并恢复你的数据，通常几秒钟。</span>
-              ) : status === 'failed' ? (
-                <span className="error-text">{sandbox?.error}</span>
-              ) : (
-                <span>云电脑已释放，数据已保存。</span>
-              )}
-            </div>
-          </div>
-          <div className="row">
-            {status === 'running' ? (
-              <button className="btn outline" onClick={release}>
-                保存并释放
-              </button>
-            ) : null}
-            {status === 'stopped' || status === 'failed' ? (
-              <button className="btn outline" onClick={start}>
-                {status === 'failed' ? '重试启动' : '启动'}
-              </button>
-            ) : null}
-            <a
-              className="btn brand"
-              href={`/u/${me.username}/`}
-              style={{ height: 40, padding: '0 20px' }}
-            >
-              {status === 'starting' ? <Spinner /> : null}
-              进入 DeepSeek Harness
-            </a>
-          </div>
-        </section>
+        <PowerPanel username={me.username} initial={me.sandbox} showToast={showToast} />
 
         <div className="grid-2">
           <ApiKeyCard onChange={refresh} showToast={showToast} />
@@ -258,6 +184,89 @@ function PasswordCard({ showToast }: { showToast: (m: string) => void }) {
           </button>
         </div>
       </form>
+    </section>
+  )
+}
+
+/** Start and save-release controls; DeepSeek Harness opens only on a running sandbox. */
+function PowerPanel({
+  username,
+  initial,
+  showToast,
+}: {
+  username: string
+  initial: SandboxInfo
+  showToast: (message: string) => void
+}) {
+  const { info, progress, start, release } = useSandbox(initial)
+  const status = info?.status ?? 'stopped'
+  const running = status === 'running'
+  const busy = status === 'starting' || status === 'releasing'
+
+  async function act(action: () => Promise<SandboxInfo>) {
+    try {
+      await action()
+    } catch (err) {
+      showToast(errorMessage(err))
+    }
+  }
+
+  return (
+    <section className={`power${running ? ' on' : ''}`}>
+      <div className="power-head">
+        <div className="power-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M12 3v8" />
+            <path d="M6.3 6.8a8 8 0 1 0 11.4 0" />
+          </svg>
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <div className="row">
+            <h3 style={{ margin: 0 }}>我的云电脑</h3>
+            <StatusBadge status={status} />
+          </div>
+          <div className="hero-meta" style={{ marginTop: 4 }}>
+            {running ? (
+              <>
+                <span>已运行 {formatDuration(info?.uptime_s)}</span>
+                <span>连接 {info?.connections ?? 0} 个</span>
+                <span>空闲 {formatDuration(info?.idle_timeout_s)} 后自动保存并释放</span>
+              </>
+            ) : status === 'starting' ? (
+              <span>正在启动，并恢复你上次的文件、会话和设置</span>
+            ) : status === 'releasing' ? (
+              <span>正在保存你的数据，完成后释放云电脑</span>
+            ) : status === 'failed' ? (
+              <span className="error-text">启动失败：{info?.error}</span>
+            ) : (
+              <span>云电脑未运行，你的数据已安全保存。启动后才能进入 DeepSeek Harness。</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {busy && progress ? <ProgressBar percent={progress.percent} label={progress.label} /> : null}
+
+      <div className="power-actions">
+        {running ? (
+          <button className="btn power-btn release" onClick={() => act(release)}>
+            保存并释放
+          </button>
+        ) : (
+          <button className="btn power-btn start" onClick={() => act(start)} disabled={busy}>
+            {status === 'failed' ? '重新启动' : status === 'releasing' ? '正在保存…' : status === 'starting' ? '正在启动…' : '启动云电脑'}
+          </button>
+        )}
+        {running ? (
+          <a className="btn power-btn enter" href={`/u/${username}/`}>
+            进入 DeepSeek Harness →
+          </a>
+        ) : (
+          <button className="btn power-btn enter" disabled title="先启动云电脑">
+            进入 DeepSeek Harness →
+          </button>
+        )}
+      </div>
     </section>
   )
 }

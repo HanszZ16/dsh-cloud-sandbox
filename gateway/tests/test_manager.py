@@ -82,3 +82,41 @@ async def test_orphans_are_saved_then_destroyed(settings, tmp_path):
     await SandboxManager(settings, backend, store).recover_orphans()
     assert "old" not in backend.live
     assert await store.load("carol") == {"home": b"state-of-carol"}
+
+
+async def test_background_operations_report_status_and_phase(settings, tmp_path):
+    import asyncio
+
+    backend = FakeBackend()
+    manager = SandboxManager(settings, backend, LocalStateStore(tmp_path))
+    manager.start_in_background("alice", POLICY)
+    assert manager.status("alice") == "starting"
+    while manager.status("alice") == "starting":
+        await asyncio.sleep(0)
+    assert manager.status("alice") == "running"
+    manager.release_in_background("alice", "test")
+    assert manager.status("alice") == "releasing"
+    while manager.status("alice") == "releasing":
+        await asyncio.sleep(0)
+    assert manager.status("alice") == "stopped"
+    assert backend.steps == ["create", "restore", "boot", "stop", "archive"]
+    # Releasing a stopped sandbox ends at once instead of reporting releasing forever.
+    manager.release_in_background("alice", "again")
+    while manager.status("alice") == "releasing":
+        await asyncio.sleep(0)
+    assert manager.status("alice") == "stopped"
+
+
+async def test_restart_saves_then_starts_with_the_new_policy(settings, tmp_path):
+    import asyncio
+
+    backend = FakeBackend()
+    manager = SandboxManager(settings, backend, LocalStateStore(tmp_path))
+    first = await manager.ensure("alice", POLICY)
+    newer = dataclasses.replace(POLICY, files={"/etc/dsh-cloud/admin.cordis.yml": b"- id: x\n"})
+    manager.restart_in_background("alice", newer, "test")
+    while manager.status("alice") != "running" or manager.get("alice") is first:
+        await asyncio.sleep(0)
+    (spec,) = backend.live.values()
+    assert spec.files == newer.files
+    assert spec.restore == {"home": b"state-of-alice"}

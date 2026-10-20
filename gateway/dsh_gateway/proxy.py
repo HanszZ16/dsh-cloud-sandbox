@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import Request, WebSocket
 from starlette.background import BackgroundTask
-from starlette.responses import StreamingResponse
+from starlette.responses import Response, StreamingResponse
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 from starlette.websockets import WebSocketDisconnect
@@ -30,6 +30,8 @@ _HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
     "trailer", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
+# dsh Web pages load the gateway's control button (save and exit, back to portal).
+OVERLAY_TAG = b'<script src="/dsh-cloud-overlay.js" defer></script>'
 _WS_SKIP = _HOP_BY_HOP | {
     "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions",
     "sec-websocket-protocol", "origin", "cookie",
@@ -60,6 +62,14 @@ def rewrite_location(location: str, mount: str, upstream_url: str) -> str:
     if location.startswith("/") and not location.startswith("//"):
         return mount.rstrip("/") + location
     return location
+
+
+def inject_overlay(html: bytes) -> bytes:
+    """`html` with the overlay script tag before </head>, or appended when there is none."""
+    index = html.find(b"</head>")
+    if index < 0:
+        return html + OVERLAY_TAG
+    return html[:index] + OVERLAY_TAG + html[index:]
 
 
 def _upstream_headers(request_headers, record: SandboxRecord, browser_host: str) -> dict[str, str]:
@@ -108,6 +118,19 @@ async def forward_http(
         elif lower == "location":
             value = rewrite_location(value, mount, handle.upstream_url)
         raw_headers.append((lower.encode(), value.encode()))
+
+    if request.method == "GET" and upstream.headers.get("content-type", "").startswith("text/html"):
+        # Pages are small; buffer one to add the overlay. aread() decodes the
+        # transfer encoding, so the encoding and length headers no longer apply.
+        try:
+            body = inject_overlay(await upstream.aread())
+        finally:
+            await upstream.aclose()
+        page = Response(body, status_code=upstream.status_code)
+        page.raw_headers = [
+            (k, v) for k, v in raw_headers if k not in {b"content-encoding", b"content-length"}
+        ] + [(b"content-length", str(len(body)).encode())]
+        return page
 
     response = StreamingResponse(
         _relay(upstream, handle.user_id), status_code=upstream.status_code, background=BackgroundTask(upstream.aclose)

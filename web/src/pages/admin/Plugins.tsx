@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api, type McpConfig, type Plugin, type PluginKind } from '../../api.ts'
 import { errorMessage, Field, Modal } from '../../ui.tsx'
 import { Loading, useLoad } from '../Admin.tsx'
+import { RestartHint, RestartPrompt, runningAffected } from './RestartPrompt.tsx'
 
 const KIND_LABEL: Record<PluginKind, string> = { bundle: 'dsh 插件', mcp: 'MCP 服务', patch: '配置补丁' }
 const KIND_HELP: Record<PluginKind, string> = {
@@ -11,11 +12,18 @@ const KIND_HELP: Record<PluginKind, string> = {
   patch: '原样追加到管理员 overlay 的 Cordis 补丁行（id 覆盖或 insert），每次启动生效，优先于用户自己的补丁。',
 }
 
-export function PluginsSection({ showToast }: { showToast: (m: string) => void }) {
-  const { data, error, reload } = useLoad(api.plugins)
-  const [editing, setEditing] = useState<Plugin | 'new' | null>(null)
+const loadCatalog = async () => {
+  const [plugins, groups, users] = await Promise.all([api.plugins(), api.groups(), api.users()])
+  return { plugins, groups, users }
+}
 
-  if (!data) return <Loading error={error} />
+export function PluginsSection({ showToast }: { showToast: (m: string) => void }) {
+  const { data: catalog, error, reload } = useLoad(loadCatalog)
+  const [editing, setEditing] = useState<Plugin | 'new' | null>(null)
+  const [restart, setRestart] = useState<string[]>([])
+
+  if (!catalog) return <Loading error={error} />
+  const data = catalog.plugins
 
   async function remove(plugin: Plugin) {
     try {
@@ -83,12 +91,16 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
           plugin={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={(message) => {
+            const affected =
+              editing === 'new' ? [] : runningAffected(catalog.users, catalog.groups, { pluginId: editing.id })
             setEditing(null)
             showToast(message)
+            setRestart(affected)
             reload()
           }}
         />
       ) : null}
+      {restart.length ? <RestartPrompt usernames={restart} onClose={() => setRestart([])} showToast={showToast} /> : null}
     </div>
   )
 }
@@ -243,6 +255,11 @@ function PluginEditor({ plugin, onClose, onSaved }: { plugin: Plugin | null; onC
               </>
             )}
           </>
+        ) : null}
+        {plugin ? (
+          <div className="wide">
+            <RestartHint />
+          </div>
         ) : null}
         {error ? <div className="error-text wide">{error}</div> : null}
       </div>

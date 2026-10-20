@@ -1,12 +1,14 @@
 /** Typed client for the gateway JSON API. Errors carry the gateway's message. */
 
 export type Role = 'admin' | 'user'
-export type SandboxStatus = 'running' | 'starting' | 'stopped' | 'failed'
+export type SandboxStatus = 'running' | 'starting' | 'releasing' | 'stopped' | 'failed'
 export type PluginKind = 'bundle' | 'mcp' | 'patch'
 
 export interface SandboxInfo {
   status: SandboxStatus
   error: string | null
+  phase?: string
+  phase_elapsed_s?: number
   sandbox_id?: string
   uptime_s?: number
   idle_s?: number
@@ -172,5 +174,6 @@ export const api = {
   deletePlugin: (id: number) => request<{ ok: true }>('DELETE', `/api/admin/plugins/${id}`),
   sandboxes: () => request<(SandboxInfo & { username: string })[]>('GET', '/api/admin/sandboxes'),
   releaseUserSandbox: (username: string) => request<SandboxInfo>('POST', `/api/admin/sandboxes/${username}/release`),
+  restartUserSandbox: (username: string) => request<SandboxInfo>('POST', `/api/admin/sandboxes/${username}/restart`),
   audit: () => request<AuditEntry[]>('GET', '/api/admin/audit?limit=300'),
 }

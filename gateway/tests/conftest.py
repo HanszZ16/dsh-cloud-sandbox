@@ -10,8 +10,12 @@ class FakeBackend(SandboxBackend):
         self.live: dict[str, SandboxSpec] = {}
         self.fail_capture = fail_capture
         self.orphans: list[SandboxHandle] = []
+        self.steps: list[str] = []
 
-    async def start(self, spec):
+    async def start(self, spec, progress=lambda step: None):
+        for step in ("create", "restore", "boot"):
+            progress(step)
+            self.steps.append(step)
         sandbox_id = f"sbx-{len(self.live)}-{spec.user_id}"
         self.live[sandbox_id] = spec
         return SandboxHandle(sandbox_id=sandbox_id, user_id=spec.user_id, upstream_url="http://fake")
@@ -19,7 +23,10 @@ class FakeBackend(SandboxBackend):
     async def launch_url(self, handle):
         return "http://fake/?token=t"
 
-    async def capture(self, handle):
+    async def capture(self, handle, progress=lambda step: None):
+        for step in ("stop", "archive"):
+            progress(step)
+            self.steps.append(step)
         if self.fail_capture:
             raise RuntimeError("disk unreadable")
         return {"home": f"state-of-{handle.user_id}".encode()}

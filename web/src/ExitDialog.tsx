@@ -1,0 +1,69 @@
+import { useState } from 'react'
+
+import { api, type SandboxInfo } from './api.ts'
+import { progressOf, releaseAndWait } from './sandbox.ts'
+import { errorMessage, Modal } from './ui.tsx'
+
+/** Confirms, saves and releases the sandbox with a progress bar, then signs out. */
+export function ExitDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [info, setInfo] = useState<SandboxInfo | null>(null)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function exit() {
+    setRunning(true)
+    setError(null)
+    try {
+      await releaseAndWait(setInfo)
+      await api.logout()
+      onDone()
+    } catch (err) {
+      setError(errorMessage(err))
+      setRunning(false)
+    }
+  }
+
+  const progress = progressOf(info, 0)
+  return (
+    <Modal
+      title="保存并退出"
+      onClose={running ? () => undefined : onClose}
+      footer={
+        running ? null : (
+          <>
+            <button className="btn ghost" onClick={onClose}>
+              取消
+            </button>
+            <button className="btn brand" onClick={exit}>
+              保存并退出
+            </button>
+          </>
+        )
+      }
+    >
+      {running ? (
+        <ProgressBar percent={progress?.percent ?? 100} label={progress?.label ?? '正在退出'} />
+      ) : (
+        <div className="stack" style={{ gap: 8 }}>
+          <div>会先保存你的文件、会话、记忆和插件设置，再释放云电脑，然后退出登录。</div>
+          <div className="muted">正在运行的任务会被中断。下次登录启动云电脑后，一切会恢复原样。</div>
+          {error ? <div className="error-text">{error}</div> : null}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+export function ProgressBar({ percent, label }: { percent: number; label: string }) {
+  return (
+    <div className="progress" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100}>
+      <div className="progress-head">
+        <span>{label}</span>
+        <span className="mono">{Math.round(percent)}%</span>
+      </div>
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  )
+}

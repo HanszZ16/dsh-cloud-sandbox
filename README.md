@@ -82,9 +82,11 @@ dsh-cloud-sandbox/
 ├── web/                           门户和管理后台（React + Vite + TypeScript）
 │   ├── src/theme/                 从 dsh 的 ui-theme 复制的设计变量和字体
 │   ├── src/pages/Login.tsx        登录页
-│   ├── src/pages/Portal.tsx       个人门户：云电脑状态、API Key、用量、已分配插件、改密码
+│   ├── public/dsh-cloud-overlay.js 注入到 dsh Web 页面的"云电脑"浮动按钮：返回门户、保存并退出
+│   ├── src/sandbox.ts             云电脑状态轮询和启动/释放进度模型
+│   ├── src/pages/Portal.tsx       个人门户：电源面板（启动/保存释放/进入，带进度条）、API Key、用量、已分配插件、改密码
 │   ├── src/pages/Admin.tsx        管理后台框架、概览、运行中的云电脑、审计日志
-│   └── src/pages/admin/           用户、用户组、插件与 MCP
+│   └── src/pages/admin/           用户、用户组、插件与 MCP；保存后提示重启受影响的云电脑
 └── gateway/                       网关（Python）
     ├── run.sh                     启动脚本：读取 .env，启动 uvicorn
     ├── .env.example               配置模板
@@ -185,7 +187,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 
 1. 打开 http://localhost:8000 ，用 `admin` 和 `GATEWAY_ADMIN_PASSWORD` 登录；
 2. 右上角进入**管理后台 → 用户**，新建一个普通用户；
-3. 退出，用新用户登录：门户会自动启动云电脑（几秒），状态变成"运行中"后点**进入 DeepSeek Harness**；
+3. 退出，用新用户登录，在门户的电源面板点**启动云电脑**，进度条走完（几秒）后点**进入 DeepSeek Harness**；
 4. 第一次进入时 dsh 会显示预览说明，点 Continue；选择工作区时直接点 **Open**（即 `/home/agent`）；
 5. 发一条消息。管理后台**概览**里的"今日模型请求"会增加。
 
@@ -198,10 +200,12 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 | 页面 / 操作 | 说明 |
 |---|---|
 | `/login` | 登录页。账号由管理员创建 |
-| `/`（门户） | 打开时自动启动云电脑；显示运行状态、空闲时长、连接数；可设置自己的 API Key、修改密码、查看今日用量和管理员分配的插件 |
-| 进入 DeepSeek Harness | 打开 `/u/<用户名>/`；云电脑没运行时会自动启动并恢复数据 |
-| 保存并释放 | 保存数据并销毁云电脑，不退出登录 |
-| 退出 | 保存数据 → 销毁云电脑 → 结束登录会话 |
+| `/`（门户） | 顶部的电源面板集中放置云电脑的操作；下方可设置自己的 API Key、修改密码、查看今日用量和管理员分配的插件 |
+| 启动云电脑 | 显示分阶段进度条（读取数据 → 创建云电脑 → 恢复文件和会话 → 启动 DeepSeek Harness），完成后面板变绿 |
+| 进入 DeepSeek Harness | 只有云电脑运行时可点；打开 `/u/<用户名>/`。直接访问这个地址时，云电脑没运行也会自动启动 |
+| 保存并释放 | 显示进度条（停止并写盘 → 打包 → 保存 → 释放），不退出登录 |
+| 保存并退出（门户右上角） | 保存并释放（带进度），然后退出登录 |
+| dsh 页面右下角的"云电脑"按钮 | **返回门户**（云电脑继续运行）或 **保存并退出**（带进度，完成后回到登录页） |
 | 直接关闭浏览器 | 云电脑继续保留，空闲超过所在用户组的时限（默认 15 分钟）后自动保存并释放 |
 
 停止网关（`Ctrl+C`）时，所有运行中的云电脑都会先保存再销毁，最多等待 10 秒让浏览器的连接断开。
@@ -219,7 +223,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 | 运行中的云电脑 | 查看并强制保存释放 |
 | 审计日志 | 登录、退出、账号与配置的修改记录 |
 
-用户组和插件分配的修改，在用户**下次启动云电脑时**生效；想立即生效，在"运行中的云电脑"里释放一次即可。
+用户组、插件和用户分配的修改，在用户**下次启动云电脑时**生效。编辑器里有这条提醒；保存后如果有受影响的用户正在运行，会弹窗列出他们，可以选择**立即重启**（先保存数据，再用新配置启动，他们正在进行的任务会中断，dsh 页面需要刷新）。"运行中的云电脑"页也可以单独重启或释放某个用户，启动和保存中的云电脑也会显示在列表里。
 
 保护措施：至少保留一个启用的管理员；不能删除自己；默认用户组不能删除，组内有用户时不能删除。
 
@@ -264,10 +268,11 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | 事件 | 动作 |
 |---|---|
 | 用户打开门户，或访问 `/u/<user>/` | 创建容器（按用户组的内存、CPU）→ 写入 `home.tar` 和 `/etc/dsh-cloud` 下的两个文件 → 安装待装的 MCP 包 → 启动 dsh → 等待 dsh 打印启动链接（本机约 3–6 秒）→ 后台安装待装的默认插件 |
-| 用户点"保存并释放"或"退出" | 停止容器（SIGTERM，让 dsh 把存储写盘）→ 打包 `/home/agent` → 写入快照 → 删除容器 → 吊销该沙箱的模型 token |
+| 用户点"保存并释放"或"保存并退出"（门户或 dsh 页面） | 停止容器（SIGTERM，让 dsh 把存储写盘）→ 打包 `/home/agent` → 写入快照 → 删除容器 → 吊销该沙箱的模型 token |
 | 没有 WebSocket 连接，且空闲超过用户组的空闲时限 | 同上 |
 | 运行超过用户组的单次最长运行时间 | 同上，不管是否活跃 |
 | 管理员停用、删除账号，或在后台释放 | 同上 |
+| 管理员在后台重启 | 同上，完成后立即用最新的用户组和插件配置重新启动 |
 | 网关重启（包括崩溃后重启） | 找出带本网关实例标签（`dsh-cloud.instance=<GATEWAY_INSTANCE_ID>`）的残留容器，先保存再删除 |
 | 保存失败 | **不删除容器**，记录错误日志，下次网关启动时作为残留容器重试，用户数据不会被丢弃 |
 
@@ -294,6 +299,12 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 ```
 
 跳转只保留路径和查询参数，不带主机名，所以用 `localhost` 或 `127.0.0.1` 访问都可以。
+
+网关转发 dsh 的 HTML 页面时，会在 `</head>` 前插入 `<script src="/dsh-cloud-overlay.js" defer>`（dsh 没有 CSP，本身也使用内联脚本）。这个脚本在 Shadow DOM 里渲染右下角的"云电脑"按钮，颜色取自 dsh 自己的设计变量；它通过同源的 `/api/me/sandbox/release` 和 `/api/auth/logout` 完成保存并退出。
+
+**启动和释放的进度**
+
+`POST /api/me/sandbox/start` 和 `POST /api/me/sandbox/release` 都立即返回，实际工作在后台进行；`GET /api/me/sandbox` 返回 `status`（`starting` / `releasing` / `running` / `stopped` / `failed`）、当前阶段 `phase` 和该阶段已用时间 `phase_elapsed_s`。前端按阶段把进度映射到区间，并在阶段内平滑推进。各后端通过 `start(spec, progress)` 和 `capture(handle, progress)` 上报阶段。
 
 **模型请求**
 
@@ -379,9 +390,9 @@ Daytona、Kubernetes + gVisor/Kata、Firecracker 等，只需要实现 `backends
 
 | 方法 | 职责 |
 |---|---|
-| `start(spec)` | 按 `spec.resources` 创建机器，恢复 `spec.restore` 里的快照，写入 `spec.files`（root 所有、只读），启动 dsh，等它开始监听 |
+| `start(spec, progress)` | 按 `spec.resources` 创建机器，恢复 `spec.restore` 里的快照，写入 `spec.files`（root 所有、只读），启动 dsh，等它开始监听 |
 | `launch_url(handle)` | 返回 dsh 启动时打印的带 token 链接 |
-| `capture(handle)` | 停止 dsh 让存储写盘，返回 `{"home": <tar>}` |
+| `capture(handle, progress)` | 停止 dsh 让存储写盘，返回 `{"home": <tar>}`；用 `progress("stop")`、`progress("archive")` 上报阶段 |
 | `destroy(handle)` | 释放机器的全部资源；机器已不存在时也要成功 |
 | `list_orphans()` | 列出本网关实例创建、但已不再跟踪的机器 |
 | `keepalive(handle)` | 可选：延长后端自己的超时（如 E2B） |
@@ -438,6 +449,6 @@ docker exec -it <容器名> bash
 - **出网与凭据**：限制沙箱出网（白名单）；需要保密的 MCP 服务由网关代理，凭据不进沙箱；
 - **用量**：目前按请求次数限额、按 token 统计；可以加 token 配额和计费；
 - **多实例**：网关的沙箱状态在内存里，多个网关共同服务同一批用户时需要把状态移到 Redis/数据库并加分布式锁（`GATEWAY_INSTANCE_ID` 只解决了互不回收）；
-- **体验**：dsh 第一次进入时要手动选择工作区；WebSocket 重连不会触发沙箱启动；默认插件安装进度只在容器日志里，门户上看不到；
+- **体验**：dsh 第一次进入时要手动选择工作区；WebSocket 重连不会触发沙箱启动；默认插件安装进度只在容器日志里，门户上看不到；管理员重启用户的云电脑后，用户已打开的 dsh 页面需要手动刷新；
 - **规格**：加预热池降低冷启动时间；
 - **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.1-rc.2` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。

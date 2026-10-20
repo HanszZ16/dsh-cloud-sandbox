@@ -64,6 +64,9 @@ class Gateway:
     def sandbox_info(self, username: str) -> dict[str, Any]:
         record = self.manager.get(username)
         info: dict[str, Any] = {"status": self.manager.status(username), "error": self.manager.start_error(username)}
+        op = self.manager.operation(username)
+        if op is not None:
+            info.update(phase=op.phase, phase_elapsed_s=round(time.monotonic() - op.since, 1))
         if record is not None:
             now = time.monotonic()
             info.update(

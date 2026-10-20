@@ -1,4 +1,6 @@
-from dsh_gateway.proxy import GATEWAY_COOKIE, rewrite_location, scope_set_cookie, strip_gateway_cookie
+from dsh_gateway.proxy import (
+    GATEWAY_COOKIE, OVERLAY_TAG, inject_overlay, rewrite_location, scope_set_cookie, strip_gateway_cookie,
+)
 
 
 def test_gateway_cookie_never_reaches_sandbox():
@@ -28,3 +30,10 @@ def test_launch_redirect_keeps_the_signed_in_authority():
 
     assert same_origin_target("http://localhost:8000/u/bob/?token=abc") == "/u/bob/?token=abc"
     assert same_origin_target("http://localhost:8000/u/bob/") == "/u/bob/"
+
+
+def test_overlay_is_injected_once_into_the_head():
+    page = inject_overlay(b"<html><head><title>x</title></head><body></body></html>")
+    assert page.count(OVERLAY_TAG) == 1
+    assert page.index(OVERLAY_TAG) < page.index(b"</head>")
+    assert inject_overlay(b"<p>fragment</p>").endswith(OVERLAY_TAG)

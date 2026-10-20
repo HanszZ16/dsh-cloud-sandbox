@@ -129,10 +129,11 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
     return () => window.clearInterval(timer)
   }, [reload])
 
-  async function release(username: string) {
+  async function act(username: string, action: 'release' | 'restart') {
     try {
-      await api.releaseUserSandbox(username)
-      showToast(`已保存并释放 ${username} 的云电脑`)
+      if (action === 'release') await api.releaseUserSandbox(username)
+      else await api.restartUserSandbox(username)
+      showToast(action === 'release' ? `正在保存并释放 ${username} 的云电脑` : `正在重启 ${username} 的云电脑`)
       reload()
     } catch (err) {
       showToast(errorMessage(err))
@@ -144,7 +145,7 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
       <div className="page-head">
         <div>
           <h2>运行中的云电脑</h2>
-          <p>释放会先保存用户数据再销毁；修改用户组或插件后释放一次，下次进入即按新配置启动。</p>
+          <p>释放和重启都会先保存用户数据。修改用户组、插件或用户分配后，重启即可让新配置生效。</p>
         </div>
         <button className="btn outline sm" onClick={reload}>
           刷新
@@ -179,7 +180,10 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
                     <td>{formatDuration(s.idle_s)}</td>
                     <td>{s.connections}</td>
                     <td className="actions">
-                      <button className="btn danger sm" onClick={() => release(s.username)}>
+                      <button className="btn ghost sm" onClick={() => act(s.username, 'restart')} disabled={s.status !== 'running'}>
+                        重启
+                      </button>
+                      <button className="btn danger sm" onClick={() => act(s.username, 'release')} disabled={s.status !== 'running'}>
                         保存并释放
                       </button>
                     </td>
@@ -204,6 +208,7 @@ const ACTION_LABEL: Record<string, string> = {
   'set-api-key': '设置 API Key',
   'clear-api-key': '删除 API Key',
   'release-sandbox': '释放云电脑',
+  'restart-sandbox': '重启云电脑',
   'create-user': '创建用户',
   'update-user': '修改用户',
   'delete-user': '删除用户',

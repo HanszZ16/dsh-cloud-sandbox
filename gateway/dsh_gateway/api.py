@@ -149,8 +149,10 @@ async def start_my_sandbox(request: Request, user: User = Depends(signed_in)) ->
 
 @router.post("/me/sandbox/release")
 async def release_my_sandbox(request: Request, user: User = Depends(signed_in)) -> dict[str, Any]:
+    """Begin saving and releasing; poll GET /me/sandbox until the status is stopped."""
     g = gw(request)
-    await g.manager.release(user.username, "released from portal")
+    g.manager.release_in_background(user.username, "released by user")
+    await asyncio.sleep(0)
     g.db.audit(user.username, "release-sandbox")
     return g.sandbox_info(user.username)
 
@@ -459,14 +461,30 @@ async def delete_plugin(plugin_id: int, request: Request, actor: User = Depends(
 @router.get("/admin/sandboxes")
 async def list_sandboxes(request: Request, _: User = Depends(admin)) -> list[dict[str, Any]]:
     g = gw(request)
-    return [{"username": name, **g.sandbox_info(name)} for name in sorted(g.manager.snapshot())]
+    return [{"username": name, **g.sandbox_info(name)} for name in g.manager.active_users()]
 
 
 @router.post("/admin/sandboxes/{username}/release")
 async def release_sandbox(username: str, request: Request, actor: User = Depends(admin)) -> dict[str, Any]:
     g = gw(request)
-    await g.manager.release(username, f"released by admin {actor.username}")
+    g.manager.release_in_background(username, f"released by admin {actor.username}")
+    await asyncio.sleep(0)
     g.db.audit(actor.username, "release-sandbox", username)
+    return g.sandbox_info(username)
+
+
+@router.post("/admin/sandboxes/{username}/restart")
+async def restart_sandbox(username: str, request: Request, actor: User = Depends(admin)) -> dict[str, Any]:
+    """Save and release a running sandbox, then start it with the user's current policy."""
+    g = gw(request)
+    user = g.db.get_user_by_name(username)
+    if user is None:
+        raise HTTPException(404, "用户不存在")
+    if g.manager.status(username) != "running":
+        raise HTTPException(400, "云电脑没有在运行，下次启动时会自动使用新配置")
+    g.manager.restart_in_background(username, g.policy_for(user), f"restarted by admin {actor.username}")
+    await asyncio.sleep(0)
+    g.db.audit(actor.username, "restart-sandbox", username)
     return g.sandbox_info(username)
 
 

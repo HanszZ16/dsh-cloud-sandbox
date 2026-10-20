@@ -17,7 +17,7 @@ import docker
 from docker.errors import NotFound
 from docker.models.containers import Container
 
-from .base import SandboxBackend, SandboxHandle, SandboxSpec, files_archive
+from .base import Progress, SandboxBackend, SandboxHandle, SandboxSpec, files_archive, no_progress
 
 _LABEL = "dsh-cloud"
 _LABEL_USER = "dsh-cloud.user"
@@ -36,14 +36,17 @@ class DockerBackend(SandboxBackend):
         self._start_timeout_s = start_timeout_s
         self._instance_id = instance_id
 
-    async def start(self, spec: SandboxSpec) -> SandboxHandle:
+    async def start(self, spec: SandboxSpec, progress: Progress = no_progress) -> SandboxHandle:
+        progress("create")
         container = await asyncio.to_thread(self._create, spec)
         try:
+            progress("restore")
             for part, data in spec.restore.items():
                 _, parent = _PARTS[part]
                 await asyncio.to_thread(container.put_archive, parent, data)
             if spec.files:
                 await asyncio.to_thread(container.put_archive, "/", files_archive(spec.files))
+            progress("boot")
             await asyncio.to_thread(container.start)
             await self._wait_listening(container)
             await asyncio.to_thread(container.reload)
@@ -96,10 +99,12 @@ class DockerBackend(SandboxBackend):
             raise RuntimeError("dsh has not printed its launch URL")
         return matches[-1]
 
-    async def capture(self, handle: SandboxHandle) -> dict[str, bytes]:
+    async def capture(self, handle: SandboxHandle, progress: Progress = no_progress) -> dict[str, bytes]:
         container = await asyncio.to_thread(self._client.containers.get, handle.sandbox_id)
+        progress("stop")
         # SIGTERM lets dsh close its stores before the copy.
         await asyncio.to_thread(container.stop, timeout=20)
+        progress("archive")
         archives: dict[str, bytes] = {}
         for part, (path, _) in _PARTS.items():
             stream, _stat = await asyncio.to_thread(container.get_archive, path)

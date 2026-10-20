@@ -5,6 +5,7 @@ import { useSession } from '../../App.tsx'
 import { errorMessage, Field, formatNumber, formatTime, Modal, StatusBadge } from '../../ui.tsx'
 import { Loading, useLoad } from '../Admin.tsx'
 import { PluginPicker } from './Plugins.tsx'
+import { RestartHint, RestartPrompt } from './RestartPrompt.tsx'
 
 interface Catalog {
   users: AdminUser[]
@@ -21,6 +22,7 @@ export function UsersSection({ showToast }: { showToast: (m: string) => void }) 
   const [editing, setEditing] = useState<AdminUser | 'new' | null>(null)
   const [deleting, setDeleting] = useState<AdminUser | null>(null)
   const [query, setQuery] = useState('')
+  const [restart, setRestart] = useState<string[]>([])
   const { me } = useSession()
 
   if (!data) return <Loading error={error} />
@@ -94,13 +96,15 @@ export function UsersSection({ showToast }: { showToast: (m: string) => void }) 
           groups={data.groups}
           plugins={data.plugins}
           onClose={() => setEditing(null)}
-          onSaved={(message) => {
+          onSaved={(message, needsRestart) => {
             setEditing(null)
             showToast(message)
+            if (needsRestart && editing !== 'new') setRestart([editing.username])
             reload()
           }}
         />
       ) : null}
+      {restart.length ? <RestartPrompt usernames={restart} onClose={() => setRestart([])} showToast={showToast} /> : null}
       {deleting ? (
         <DeleteUser
           user={deleting}
@@ -127,7 +131,7 @@ function UserEditor({
   groups: Group[]
   plugins: Plugin[]
   onClose: () => void
-  onSaved: (message: string) => void
+  onSaved: (message: string, needsRestart: boolean) => void
 }) {
   const [username, setUsername] = useState(user?.username ?? '')
   const [displayName, setDisplayName] = useState(user?.display_name ?? '')
@@ -153,11 +157,13 @@ function UserEditor({
           plugin_ids: pluginIds,
           ...(password ? { password } : {}),
         })
-        onSaved(`已保存 ${user.username}`)
+        const samePlugins = [...pluginIds].sort().join() === [...user.plugin_ids].sort().join()
+        const changed = groupId !== user.group_id || !samePlugins
+        onSaved(`已保存 ${user.username}`, changed && !disabled && user.sandbox.status === 'running')
       } else {
         const created = await api.createUser({ username, password, display_name: displayName, role, group_id: groupId })
         if (pluginIds.length) await api.updateUser(created.id, { plugin_ids: pluginIds })
-        onSaved(`已创建 ${created.username}`)
+        onSaved(`已创建 ${created.username}`, false)
       }
     } catch (err) {
       setError(errorMessage(err))
@@ -226,6 +232,11 @@ function UserEditor({
           </div>
           <PluginPicker plugins={plugins} selected={pluginIds} inherited={group?.plugin_ids ?? []} onChange={setPluginIds} />
         </div>
+        {user ? (
+          <div className="wide">
+            <RestartHint />
+          </div>
+        ) : null}
         {error ? <div className="error-text wide">{error}</div> : null}
       </div>
     </Modal>

@@ -16,7 +16,7 @@ import asyncio
 import re
 import time
 
-from .base import SandboxBackend, SandboxHandle, SandboxSpec, files_archive
+from .base import Progress, SandboxBackend, SandboxHandle, SandboxSpec, files_archive, no_progress
 
 _LAUNCH_LINE = re.compile(r"dsh web: (https?://\S+\?token=\S+)")
 _LOG = "/tmp/dsh-web.log"
@@ -45,13 +45,15 @@ class E2BBackend(SandboxBackend):
         self._e2b_timeout_s = idle_timeout_s + 300
         self._sandboxes: dict[str, object] = {}
 
-    async def start(self, spec: SandboxSpec) -> SandboxHandle:
+    async def start(self, spec: SandboxSpec, progress: Progress = no_progress) -> SandboxHandle:
+        progress("create")
         sbx = await self._sandbox_cls.create(
             template=self._template,
             timeout=self._e2b_timeout_s,
             metadata={_METADATA_KEY: spec.user_id, _METADATA_INSTANCE: self._instance_id},
         )
         try:
+            progress("restore")
             for part, data in spec.restore.items():
                 archive = f"/tmp/restore-{part}.tar"
                 await sbx.files.write(archive, data)
@@ -66,6 +68,7 @@ class E2BBackend(SandboxBackend):
             # The gateway rewrites Host to the E2B ingress authority, so trust that.
             env["DSH_TRUSTED_HOST"] = host
             env["DSH_HOME"] = "/home/agent/.dsh"
+            progress("boot")
             await sbx.commands.run(
                 f"cd /home/agent && nohup runuser -u agent -- dsh-sandbox-entrypoint > {_LOG} 2>&1 &",
                 envs=env,
@@ -106,14 +109,16 @@ class E2BBackend(SandboxBackend):
             raise RuntimeError("dsh has not printed its launch URL")
         return matches[-1]
 
-    async def capture(self, handle: SandboxHandle) -> dict[str, bytes]:
+    async def capture(self, handle: SandboxHandle, progress: Progress = no_progress) -> dict[str, bytes]:
         sbx = self._sandboxes[handle.sandbox_id]
+        progress("stop")
         # SIGTERM, then wait for exit, so dsh closes its stores before the copy.
         await sbx.commands.run(
             "pkill -TERM -f 'dsh --profile web' || true; "
             "for i in $(seq 1 40); do pgrep -f 'dsh --profile web' >/dev/null || break; sleep 0.5; done",
             user="root",
         )
+        progress("archive")
         archives: dict[str, bytes] = {}
         for part, (parent, name) in _PART_DIRS.items():
             archive = f"/tmp/capture-{part}.tar"
