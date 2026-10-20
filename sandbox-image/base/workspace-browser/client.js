@@ -25,28 +25,31 @@ window.__ModuleLoader__.load({
 
     const ID = 'dsh-cloud-workspace-browser'
     const KIND = 'workspace-browser'
-    const ZH = (document.documentElement.lang || navigator.language || '').toLowerCase().startsWith('zh')
-    const T = ZH
-      ? {
-          title: '工作空间浏览器', guide: '工作空间浏览器',
-          description: '实时查看并接管 Agent 正在操作的浏览器',
-          address: '输入网址后回车', starting: '正在启动浏览器…', connecting: '正在连接…',
-          reconnecting: '连接已断开，正在重连…', agent: 'Agent 正在操作', you: '你可以直接点击和输入',
-          unavailable: '这个工作空间还没有浏览器。请退出登录后重新登录，让工作空间用新版本重新启动。',
-          unauthorized: '登录已失效，请刷新页面重新登录。',
-          back: '后退', forward: '前进', reload: '刷新', newTab: '新标签页', closeTab: '关闭标签页',
-          ok: '确定', cancel: '取消', untitled: '新标签页',
-        }
-      : {
-          title: 'Workspace browser', guide: 'Workspace browser',
-          description: 'Watch and take over the browser the agent is operating',
-          address: 'Enter a URL', starting: 'Starting the browser…', connecting: 'Connecting…',
-          reconnecting: 'Disconnected, reconnecting…', agent: 'Agent is operating', you: 'Click and type to take over',
-          unavailable: 'This workspace has no browser yet. Sign out and back in so it restarts on the current version.',
-          unauthorized: 'Your sign-in has expired. Reload the page to sign in again.',
-          back: 'Back', forward: 'Forward', reload: 'Reload', newTab: 'New tab', closeTab: 'Close tab',
-          ok: 'OK', cancel: 'Cancel', untitled: 'New tab',
-        }
+    // Copy follows dsh's own language setting through its locale service.
+    const NS = 'dshCloudWorkspaceBrowser'
+    const COPY = {
+      zh: {
+        title: '浏览器预览', description: '实时查看并接管 Agent 正在操作的浏览器',
+        address: '输入网址后回车', starting: '正在启动浏览器…', connecting: '正在连接…',
+        reconnecting: '连接已断开，正在重连…', agent: 'Agent 正在操作', you: '你可以直接点击和输入',
+        unavailable: '这个工作空间还没有浏览器。请退出登录后重新登录，让工作空间用新版本重新启动。',
+        unauthorized: '登录已失效，请刷新页面重新登录。',
+        back: '后退', forward: '前进', reload: '刷新', newTab: '新标签页', closeTab: '关闭标签页',
+        ok: '确定', cancel: '取消', untitled: '新标签页',
+      },
+      en: {
+        title: 'Browser preview', description: 'Watch and take over the browser the agent is operating',
+        address: 'Enter a URL', starting: 'Starting the browser…', connecting: 'Connecting…',
+        reconnecting: 'Disconnected, reconnecting…', agent: 'Agent is operating', you: 'Click and type to take over',
+        unavailable: 'This workspace has no browser yet. Sign out and back in so it restarts on the current version.',
+        unauthorized: 'Your sign-in has expired. Reload the page to sign in again.',
+        back: 'Back', forward: 'Forward', reload: 'Reload', newTab: 'New tab', closeTab: 'Close tab',
+        ok: 'OK', cancel: 'Cancel', untitled: 'New tab',
+      },
+    }
+    // dsh's own icons, so the tab, guide entry, and toolbar match its Browser, Files, and Terminal.
+    const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { GuideArtworkBrowser, IconGlobeOutlineRegular, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular } = primitives
 
     // Keys forwarded as key presses; everything else arrives as text through the input box.
     const KEY_CODES = {
@@ -73,27 +76,34 @@ window.__ModuleLoader__.load({
         strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', className, 'aria-hidden': true,
       }, ...[].concat(d).map((path, i) => h('path', { key: i, d: path })))
     }
-    const BrowserGlyph = (props) => h(Icon, {
-      ...props,
-      d: ['M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z', 'M3 9h18', 'M6.5 6.5h.01', 'M9 6.5h.01', 'm10 13 2 2 4-4'],
-    })
+    /** Tab chip title: the globe and the localized name, like dsh's Browser tab. */
+    function WorkspaceBrowserTitle({ t }) {
+      return h(React.Fragment, null,
+        h('span', { style: { display: 'inline-flex', flex: '0 0 auto', marginRight: 4 } }, h(IconGlobeOutlineRegular, null)),
+        // The chip's label box runs about 14px under its close button; stop the text
+        // short of the button and end long titles with an ellipsis.
+        h('span', { style: { minWidth: 0, marginRight: 16, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t('title')))
+    }
 
     const css = {
-      root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, background: 'var(--dsw-alias-bg-layer-1)', color: 'var(--dsw-alias-label-primary)', fontSize: 13 },
-      toolbar: { display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px', borderBottom: '0.5px solid var(--dsw-alias-border-l4)' },
+      // Like dsh's Files and Terminal panes: no fill of its own, a spaced header, one hairline above the content.
+      root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, color: 'var(--dsw-alias-label-primary)', fontSize: 13 },
+      header: { display: 'flex', flexDirection: 'column', gap: 4, padding: '6px 12px 8px', borderBottom: '0.5px solid var(--dsw-alias-border-l4)' },
+      toolbar: { display: 'flex', alignItems: 'center', gap: 4 },
       button: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, border: 'none', borderRadius: 8, background: 'transparent', color: 'inherit', cursor: 'pointer' },
       address: { flex: 1, minWidth: 0, height: 28, padding: '0 10px', border: '0.5px solid var(--dsw-alias-border-l3)', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)', color: 'inherit', font: 'inherit', outline: 'none' },
-      tabs: { display: 'flex', gap: 4, padding: '4px 8px', overflowX: 'auto', borderBottom: '0.5px solid var(--dsw-alias-border-l4)' },
+      tabs: { display: 'flex', gap: 4, overflowX: 'auto' },
       tab: { display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 180, height: 24, padding: '0 4px 0 10px', borderRadius: 6, border: 'none', cursor: 'pointer', color: 'inherit', font: 'inherit', fontSize: 12, flex: 'none' },
-      status: { display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' },
-      stage: { position: 'relative', flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: 'var(--dsw-alias-bg-base)' },
-      frame: { maxWidth: '100%', maxHeight: '100%', userSelect: 'none', cursor: 'default', outline: 'none', boxShadow: '0 0 0 0.5px var(--dsw-alias-border-l3)' },
+      status: { display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 4, fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' },
+      stage: { position: 'relative', flex: 1, minHeight: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflow: 'hidden', padding: 12 },
+      frame: { maxWidth: '100%', maxHeight: '100%', borderRadius: 8, userSelect: 'none', cursor: 'default', outline: 'none', boxShadow: '0 0 0 0.5px var(--dsw-alias-border-l3)' },
       sink: { position: 'absolute', left: 0, top: 0, width: 1, height: 1, opacity: 0, border: 0, padding: 0, resize: 'none' },
       placeholder: { color: 'var(--dsw-alias-label-tertiary)' },
       dialog: { position: 'absolute', left: 12, right: 12, top: 12, padding: 12, borderRadius: 12, background: 'var(--dsw-alias-bg-layer-2)', boxShadow: '0 6px 24px rgba(0,0,0,0.18)' },
     }
 
-    function WorkspaceBrowser() {
+    function WorkspaceBrowser({ t }) {
+      const T = new Proxy({}, { get: (_, key) => t(key) })
       const [frame, setFrame] = useState(null)
       const [tabs, setTabs] = useState({ tabs: [], canGoBack: false, canGoForward: false })
       const [agent, setAgent] = useState(false)
@@ -247,20 +257,21 @@ window.__ModuleLoader__.load({
         e.currentTarget.querySelector('input')?.blur()
       }
 
-      const button = (title, d, onClick, disabled) => h('button', {
+      const button = (title, icon, onClick, disabled) => h('button', {
         type: 'button', title, 'aria-label': title, onClick, disabled,
         style: { ...css.button, opacity: disabled ? 0.35 : 1, cursor: disabled ? 'default' : 'pointer' },
-      }, h(Icon, { d }))
+      }, typeof icon === 'function' ? h(icon, null) : h(Icon, { d: icon }))
 
       const placeholder = {
         reconnecting: T.reconnecting, starting: T.starting, unavailable: T.unavailable, unauthorized: T.unauthorized,
       }[state] ?? T.connecting
 
       return h('div', { style: css.root },
+        h('div', { style: css.header },
         h('form', { style: css.toolbar, onSubmit: go },
-          button(T.back, 'M15 18l-6-6 6-6', () => send({ type: 'back' }), !tabs.canGoBack),
-          button(T.forward, 'M9 18l6-6-6-6', () => send({ type: 'forward' }), !tabs.canGoForward),
-          button(T.reload, ['M20 11a8 8 0 1 0-2.3 5.7', 'M20 4v7h-7'], () => send({ type: 'reload' })),
+          button(T.back, IconChevronLeftOutlineRegular, () => send({ type: 'back' }), !tabs.canGoBack),
+          button(T.forward, IconChevronRightOutlineRegular, () => send({ type: 'forward' }), !tabs.canGoForward),
+          button(T.reload, IconRefreshOutlineRegular, () => send({ type: 'reload' })),
           h('input', {
             style: css.address, value: address, placeholder: T.address, spellCheck: false,
             onChange: (e) => setAddress(e.target.value), onFocus: () => setEditing(true), onBlur: () => setEditing(false),
@@ -291,6 +302,7 @@ window.__ModuleLoader__.load({
             },
           }),
           h('span', { style: { color: agent ? 'var(--dsw-alias-label-primary)' : undefined } }, agent ? T.agent : T.you),
+        ),
         ),
         h('div', { style: css.stage },
           frame === null || state !== 'ready'
@@ -336,18 +348,24 @@ window.__ModuleLoader__.load({
       )
     }
 
-    module.exports.inject = ['slots', 'sidebarRight', 'sidebarRightTabs']
+    module.exports.inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs']
     module.exports.apply = (ctx) => {
+      const t = ctx.locale.bind(NS)
+      ctx.effect(() => ctx.locale.register(NS, COPY), 'dsh-cloud-workspace-browser: copy')
       ctx.effect(() => ctx.sidebarRightTabs.register({
         id: ID,
         kind: KIND,
         priority: 'extension',
-        title: () => T.title,
-        guide: [{ id: 'open', order: 31, title: () => T.guide, description: () => T.description, icon: BrowserGlyph }],
+        title: () => t('title'),
+        guide: [{ id: 'open', order: 31, title: () => t('title'), description: () => t('description'), icon: GuideArtworkBrowser }],
       }), 'dsh-cloud-workspace-browser: type')
       ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-        name: 'sidebar.right.pane.tab', key: ID,
+        name: 'sidebar.right.pane.tab', key: ID, locale: NS,
       }, WorkspaceBrowser)), 'dsh-cloud-workspace-browser: body')
+      // A registered title draws the chip's icon and text; without one the chip shows bare text.
+      ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
+        name: 'sidebar.right.pane.tab.title', key: ID, locale: NS,
+      }, WorkspaceBrowserTitle)), 'dsh-cloud-workspace-browser: title')
       ctx.effect(() => watchAgent(() => {
         try {
           // Opens the tab in the current session, or brings an open one forward.

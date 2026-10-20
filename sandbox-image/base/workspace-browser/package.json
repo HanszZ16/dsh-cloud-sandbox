@@ -1,6 +1,6 @@
 {
   "name": "dsh-cloud-workspace-browser",
-  "version": "0.3.0",
+  "version": "0.4.3",
   "description": "Workspace browser for dsh-cloud: the agent drives the workspace's Chromium through Playwright MCP, and the user watches and takes over from a right-Sidebar tab.",
   "type": "module",
   "exports": {

@@ -272,7 +272,7 @@ E2B 后端把镜像地址当作 template id，不做标签检查，需要自己�
 
 ## 工作空间浏览器：实时查看并接管 agent 的浏览器
 
-每个工作空间有一个常驻的 Chromium，agent 和用户操作的是**同一个浏览器**：agent 通过 Playwright MCP 操作它，用户在 dsh 右侧边栏的「工作空间浏览器」标签里实时看到画面，可以随时点击、输入（包括中文）、切换标签页和跳转，比如替 agent 完成登录。agent 一开始操作浏览器，这个标签就会自动打开（右侧边栏收起时也会展开）。
+每个工作空间有一个常驻的 Chromium，agent 和用户操作的是**同一个浏览器**：agent 通过 Playwright MCP 操作它，用户在 dsh 右侧边栏的「浏览器预览」标签（英文界面为 Browser preview，跟随 dsh 的语言设置）里实时看到画面，可以随时点击、输入（包括中文）、切换标签页和跳转，比如替 agent 完成登录。agent 一开始操作浏览器，这个标签就会自动打开（右侧边栏收起时也会展开）。
 
 ```
 沙箱
@@ -284,7 +284,7 @@ E2B 后端把镜像地址当作 template id，不做标签检查，需要自己�
 dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName browser，工具名 mcp__browser__*）+ 右侧边栏插件（画面、地址栏、前进/后退/刷新、标签页、状态，agent 开始操作时自动打开）
 ```
 
-**启用：** 管理后台 **插件与 MCP → 添加工作空间浏览器**（模板会填好 spec `file:/usr/local/lib/dsh-cloud/workspace-browser`），再分配给用户组或用户。它是一个 dsh 组合包，和 `@playwright/mcp`（0.0.80）一起装在镜像里，安装不需要联网，在 dsh 启动前完成；它挂载两行配置：连接中转服务的 Playwright MCP、右侧边栏插件。分配后重启工作空间即可：agent 在所有会话里都有 `mcp__browser__*` 工具；也可以在右侧边栏引导页手动点 **工作空间浏览器**（英文界面显示 Workspace browser）。
+**启用：** 管理后台 **插件与 MCP → 添加工作空间浏览器**（模板会填好 spec `file:/usr/local/lib/dsh-cloud/workspace-browser`），再分配给用户组或用户。它是一个 dsh 组合包，和 `@playwright/mcp`（0.0.80）一起装在镜像里，安装不需要联网，在 dsh 启动前完成；它挂载两行配置：连接中转服务的 Playwright MCP、右侧边栏插件。分配后重启工作空间即可：agent 在所有会话里都有 `mcp__browser__*` 工具；也可以在右侧边栏引导页手动点 **浏览器预览**。
 
 **说明：**
 

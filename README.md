@@ -273,7 +273,7 @@ The E2B backend treats the image reference as a template id and does not check l
 
 ## Workspace browser: watch and take over the agent's browser
 
-Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Workspace browser" tab of dsh's right sidebar, where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent. The tab opens by itself (expanding a collapsed sidebar) when the agent starts operating the browser.
+Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Browser preview" tab of dsh's right sidebar ("浏览器预览" in Chinese, following dsh's language setting), where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent. The tab opens by itself (expanding a collapsed sidebar) when the agent starts operating the browser.
 
 ```
 Sandbox
@@ -285,7 +285,7 @@ Gateway  /u/<user>/_dsh-cloud/browser  →  :3081 (that user only)
 dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName browser, tools mcp__browser__*) + a right-sidebar plugin (live view, address bar, back/forward/reload, tabs, status; opens when the agent starts operating)
 ```
 
-**Enabling it:** in the admin console, **Plugins & MCP → 添加工作空间浏览器 (add workspace browser)** (the template fills in the spec `file:/usr/local/lib/dsh-cloud/workspace-browser`), then assign it to groups or users. It is a dsh bundle shipped in the image together with `@playwright/mcp` (0.0.80), so installing it needs no network and happens before dsh starts. It mounts two rows: Playwright MCP connected to the hub, and the right-sidebar plugin. Restart the workspace after assigning it: the agent has the `mcp__browser__*` tools in every session, and **Workspace browser** can also be opened by hand from the right sidebar's guide page.
+**Enabling it:** in the admin console, **Plugins & MCP → 添加工作空间浏览器 (add workspace browser)** (the template fills in the spec `file:/usr/local/lib/dsh-cloud/workspace-browser`), then assign it to groups or users. It is a dsh bundle shipped in the image together with `@playwright/mcp` (0.0.80), so installing it needs no network and happens before dsh starts. It mounts two rows: Playwright MCP connected to the hub, and the right-sidebar plugin. Restart the workspace after assigning it: the agent has the `mcp__browser__*` tools in every session, and **Browser preview** can also be opened by hand from the right sidebar's guide page.
 
 **Notes:**
 
