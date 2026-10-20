@@ -14,18 +14,18 @@ interface Step {
 
 const STEPS: Record<'starting' | 'releasing', Step[]> = {
   starting: [
-    { phase: 'queued', label: '排队中', from: 0, to: 5, expected: 0.5 },
-    { phase: 'prepare', label: '读取你的数据', from: 5, to: 15, expected: 0.5 },
-    { phase: 'create', label: '创建云电脑', from: 15, to: 30, expected: 1 },
-    { phase: 'restore', label: '恢复文件和会话', from: 30, to: 45, expected: 1 },
-    { phase: 'boot', label: '启动 DeepSeek Harness', from: 45, to: 98, expected: 5 },
+    { phase: 'queued', label: '准备中', from: 0, to: 5, expected: 0.5 },
+    { phase: 'prepare', label: '读取你的工作空间', from: 5, to: 15, expected: 0.5 },
+    { phase: 'create', label: '准备运行环境', from: 15, to: 30, expected: 1 },
+    { phase: 'restore', label: '恢复文件和对话', from: 30, to: 45, expected: 1 },
+    { phase: 'boot', label: '打开 DeepSeek Harness', from: 45, to: 98, expected: 5 },
   ],
   releasing: [
-    { phase: 'queued', label: '排队中', from: 0, to: 5, expected: 0.5 },
-    { phase: 'stop', label: '停止 DeepSeek Harness 并写盘', from: 5, to: 35, expected: 1.5 },
-    { phase: 'archive', label: '打包文件和会话', from: 35, to: 65, expected: 1 },
-    { phase: 'save', label: '保存数据', from: 65, to: 85, expected: 0.5 },
-    { phase: 'destroy', label: '释放云电脑', from: 85, to: 98, expected: 0.5 },
+    { phase: 'queued', label: '准备保存', from: 0, to: 5, expected: 0.5 },
+    { phase: 'stop', label: '保存对话和设置', from: 5, to: 35, expected: 1.5 },
+    { phase: 'archive', label: '保存文件', from: 35, to: 65, expected: 1 },
+    { phase: 'save', label: '同步工作空间', from: 65, to: 85, expected: 0.5 },
+    { phase: 'destroy', label: '即将完成', from: 85, to: 98, expected: 0.5 },
   ],
 }
 

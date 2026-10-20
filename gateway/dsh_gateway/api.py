@@ -130,6 +130,7 @@ async def me(request: Request, user: User = Depends(signed_in)) -> dict[str, Any
             for p in g.db.effective_plugins(user)
         ],
         "sandbox": g.sandbox_info(user.username),
+        "workspace_saved": g.manager.has_saved_state(user.username),
     }
 
 
@@ -481,7 +482,7 @@ async def restart_sandbox(username: str, request: Request, actor: User = Depends
     if user is None:
         raise HTTPException(404, "用户不存在")
     if g.manager.status(username) != "running":
-        raise HTTPException(400, "云电脑没有在运行，下次启动时会自动使用新配置")
+        raise HTTPException(400, "工作空间正在休眠，下次打开时会自动使用新配置")
     g.manager.restart_in_background(username, g.policy_for(user), f"restarted by admin {actor.username}")
     await asyncio.sleep(0)
     g.db.audit(actor.username, "restart-sandbox", username)

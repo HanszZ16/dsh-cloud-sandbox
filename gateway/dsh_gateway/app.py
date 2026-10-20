@@ -1,10 +1,10 @@
 """Gateway entry: accounts, per-user sandbox routing, the model proxy, and the web UI.
 
 Routes:
-  /api/...              portal and admin JSON API (api.py)
+  /api/...              account, workspace, and admin JSON API (api.py)
   *    /u/<user>/...    the user's dsh Web, started on first use
   *    /llm/...         DeepSeek API proxy for sandboxes (per-sandbox token)
-  GET  /, /login, /admin/...   the React portal and admin console (web/dist)
+  GET  /, /login, /account, /admin/...   launch page, sign-in, account settings, admin console (web/dist)
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import html
 import json
 import logging
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpx
 from fastapi import FastAPI, Request, WebSocket
@@ -86,21 +86,24 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
             return RedirectResponse("/login", status_code=303)
         if user.username != user_id:
             return RedirectResponse(f"/u/{user.username}/", status_code=303)
-        try:
-            record = await gw.manager.ensure(user.username, gw.policy_for(user))
-        except Exception as err:
-            log.exception("starting sandbox for %s failed", user_id)
-            return HTMLResponse(_error_page("云电脑启动失败", str(err)), status_code=502)
+        record = gw.manager.get(user.username)
+        if record is None:
+            if _is_navigation(request):
+                # The launch page wakes the workspace with progress, then returns here.
+                target = f"/u/{user_id}/{path}" + (f"?{request.url.query}" if request.url.query else "")
+                return RedirectResponse(f"/?next={quote(target, safe='')}", status_code=303)
+            # A page left open on a sleeping workspace must not wake it in the background.
+            return JSONResponse({"detail": "workspace is asleep"}, status_code=503)
         record.touch()
         if (
-            path == ""
-            and request.method == "GET"
+            _is_navigation(request)
             and "token" not in request.query_params
             and (record.auth_cookie is None or record.auth_cookie not in request.cookies)
         ):
-            # Exchange dsh's process launch token for its session cookie. The redirect
-            # keeps only path and query so the browser stays on the authority it signed
-            # in on; dsh's printed URL names GATEWAY_PUBLIC_URL, which may differ.
+            # Exchange dsh's process launch token for its session cookie; a page
+            # opened on a restarted workspace carries no cookie for the new dsh. The
+            # redirect keeps only path and query so the browser stays on the authority
+            # it signed in on; dsh's printed URL names GATEWAY_PUBLIC_URL, which may differ.
             return RedirectResponse(
                 same_origin_target(await gw.manager.backend.launch_url(record.handle)), status_code=303
             )
@@ -140,9 +143,9 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
         key = gw.user_api_key(user)
         if key is None:
             if not group.get("allow_shared_key"):
-                return _llm_error(403, "no API key: set your DeepSeek API key in the portal")
+                return _llm_error(403, "no API key: set your DeepSeek API key in account settings (avatar menu, bottom right)")
             if not settings.deepseek_api_key:
-                return _llm_error(503, "gateway has no DEEPSEEK_API_KEY configured; set your own key in the portal")
+                return _llm_error(503, "no shared API key is configured; set your own key in account settings (avatar menu, bottom right)")
             key = settings.deepseek_api_key
         meter = None
         if request.method == "POST" and path.rstrip("/").endswith(_METERED_SUFFIXES):
@@ -193,7 +196,7 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
             return FileResponse(candidate)
         index = settings.web_dist / "index.html"
         if not index.exists():
-            return HTMLResponse(_error_page("前端尚未构建", "在 web/ 目录运行 pnpm install && pnpm build"), status_code=503)
+            return HTMLResponse(_error_page("页面尚未构建", "在 web/ 目录运行 pnpm install && pnpm build"), status_code=503)
         return FileResponse(index, headers={"cache-control": "no-cache"})
 
     return app
@@ -203,6 +206,16 @@ def same_origin_target(url: str) -> str:
     """Path and query of `url`, so a redirect never moves the browser to another authority."""
     parts = urlsplit(url)
     return parts.path + (f"?{parts.query}" if parts.query else "")
+
+
+def _is_navigation(request: Request) -> bool:
+    """A top-level page load, as opposed to a script's fetch."""
+    if request.method != "GET":
+        return False
+    mode = request.headers.get("sec-fetch-mode")
+    if mode is not None:
+        return mode == "navigate"
+    return "text/html" in request.headers.get("accept", "")
 
 
 def _model_of(body: bytes) -> str | None:
@@ -227,4 +240,4 @@ def _error_page(title: str, detail: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)}</title>
 <style>body{{font:14px/1.6 -apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;max-width:640px;margin:12vh auto;padding:0 16px;color:#0f1115;background:#fff}}
 @media (prefers-color-scheme:dark){{body{{color:#f2f3f5;background:#16171a}}}}a{{color:#4d6bfe}}pre{{white-space:pre-wrap;opacity:.8}}</style></head>
-<body><h2>{html.escape(title)}</h2><pre>{html.escape(detail)}</pre><p><a href="/">返回门户</a></p></body></html>"""
+<body><h2>{html.escape(title)}</h2><pre>{html.escape(detail)}</pre><p><a href="/">返回</a></p></body></html>"""

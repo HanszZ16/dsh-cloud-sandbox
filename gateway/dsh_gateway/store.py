@@ -22,6 +22,10 @@ class LocalStateStore:
     def _dir(self, user_id: str) -> Path:
         return self._root / user_id
 
+    def exists(self, user_id: str) -> bool:
+        """Whether the user has a saved snapshot, i.e. has used their workspace before."""
+        return any((self._dir(user_id) / f"{part}.tar").exists() for part in STATE_PARTS)
+
     async def load(self, user_id: str) -> dict[str, bytes]:
         return await asyncio.to_thread(self._load, user_id)
 

@@ -36,6 +36,8 @@ export interface Me extends UserInfo {
   quota: { daily_request_limit: number; requests_today: number }
   plugins: { name: string; kind: PluginKind; description: string }[]
   sandbox: SandboxInfo
+  /** Whether the workspace has been used before (a saved snapshot exists). */
+  workspace_saved: boolean
 }
 
 export interface Usage {
@@ -48,6 +50,8 @@ export interface AdminUser extends UserInfo {
   plugin_ids: number[]
   usage_today: Usage
   sandbox: SandboxInfo
+  /** Whether the workspace has been used before (a saved snapshot exists). */
+  workspace_saved: boolean
 }
 
 export interface Group {

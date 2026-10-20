@@ -33,7 +33,7 @@ export function GroupsSection({ showToast }: { showToast: (m: string) => void })
       <div className="page-head">
         <div>
           <h2>用户组</h2>
-          <p>每个用户属于一个组：组决定云电脑的资源、模型权限、配额和默认插件。修改在用户下次启动云电脑时生效。</p>
+          <p>每个用户属于一个组：组决定工作空间的资源、模型权限、配额和预装插件。修改在工作空间下次启动时生效。</p>
         </div>
         <button className="btn primary" onClick={() => setEditing('new')}>
           新建用户组
@@ -63,7 +63,7 @@ export function GroupsSection({ showToast }: { showToast: (m: string) => void })
             <div className="hero-meta" style={{ marginTop: 10 }}>
               <span>内存 {g.mem_limit}</span>
               <span>CPU {g.cpus} 核</span>
-              <span>空闲 {formatDuration(g.idle_timeout_s)} 释放</span>
+              <span>空闲 {formatDuration(g.idle_timeout_s)} 后休眠</span>
               <span>最长运行 {formatDuration(g.max_lifetime_s)}</span>
               <span>{g.allow_shared_key ? '可用共享 Key' : '必须使用自有 Key'}</span>
               <span>{g.daily_request_limit ? `每日 ${g.daily_request_limit} 次请求` : '请求不限次'}</span>
@@ -177,7 +177,7 @@ function GroupEditor({
         <Field label="CPU 核数">
           <input className="input" type="number" min={0.5} step={0.5} value={cpus} onChange={(e) => setCpus(e.target.value)} />
         </Field>
-        <Field label="空闲多久后释放（分钟）" hint="没有浏览器连接且无模型请求时开始计时">
+        <Field label="空闲多久后休眠（分钟）" hint="没有浏览器连接且无模型请求时开始计时">
           <input className="input" type="number" min={1} value={idleMinutes} onChange={(e) => setIdleMinutes(e.target.value)} />
         </Field>
         <Field label="单次最长运行（小时）">
@@ -192,7 +192,7 @@ function GroupEditor({
         <div className="field wide">
           <label className="checkbox">
             <input type="checkbox" checked={allowShared} onChange={(e) => setAllowShared(e.target.checked)} />
-            允许使用团队共享 API Key（关闭后组内用户必须在门户设置自己的 Key）
+            允许使用团队共享 API Key（关闭后组内用户必须在账号设置里填写自己的 Key）
           </label>
         </div>
         <div className="field wide">

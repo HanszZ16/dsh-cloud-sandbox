@@ -37,8 +37,8 @@ export function LoginPage() {
           <span style={{ color: 'var(--dsw-static-deepseek-500)' }}>
             <FishLogo size={44} />
           </span>
-          <div className="wordmark">DeepSeek Harness Cloud</div>
-          <p>登录后进入你的专属云电脑</p>
+          <div className="wordmark">DeepSeek Harness</div>
+          <p>登录你的工作空间</p>
         </div>
         <form className="login-form" onSubmit={submit}>
           <label className="field">

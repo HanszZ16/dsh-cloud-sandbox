@@ -34,7 +34,7 @@ export function UsersSection({ showToast }: { showToast: (m: string) => void }) 
       <div className="page-head">
         <div>
           <h2>用户</h2>
-          <p>账号由管理员创建。用户名创建后不可修改，它对应用户云电脑数据的存储目录。</p>
+          <p>账号由管理员创建。用户名创建后不可修改，它对应用户工作空间数据的存储目录。</p>
         </div>
         <div className="row">
           <input className="input" style={{ width: 200, height: 36 }} placeholder="搜索用户" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -50,7 +50,7 @@ export function UsersSection({ showToast }: { showToast: (m: string) => void }) 
               <th>用户</th>
               <th>角色</th>
               <th>用户组</th>
-              <th>云电脑</th>
+              <th>工作空间</th>
               <th>今日请求 / tokens</th>
               <th>API Key</th>
               <th>最近登录</th>
@@ -218,7 +218,7 @@ function UserEditor({
           </div>
         </Field>
         {user ? (
-          <Field label="账号状态" hint="停用会立即下线并保存、释放其云电脑">
+          <Field label="账号状态" hint="停用会立即下线，并保存后让其工作空间休眠">
             <label className="checkbox" style={{ height: 36 }}>
               <input type="checkbox" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} />
               停用此账号
@@ -272,7 +272,7 @@ function DeleteUser({ user, onClose, onDeleted }: { user: AdminUser; onClose: ()
       }
     >
       <div className="stack">
-        <div>账号会被删除，正在运行的云电脑会先保存再释放。</div>
+        <div>账号会被删除；活跃的工作空间会先保存再关闭。</div>
         <label className="checkbox">
           <input type="checkbox" checked={purge} onChange={(e) => setPurge(e.target.checked)} />
           同时删除该用户保存的全部数据（会话、文件、记忆、插件），不可恢复

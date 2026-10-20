@@ -3,8 +3,9 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import { ApiError, api, type Me } from './api.ts'
 import { AdminPage } from './pages/Admin.tsx'
+import { AccountPage } from './pages/Account.tsx'
+import { LaunchPage } from './pages/Launch.tsx'
 import { LoginPage } from './pages/Login.tsx'
-import { PortalPage } from './pages/Portal.tsx'
 import { Spinner } from './ui.tsx'
 
 interface Session {
@@ -49,7 +50,8 @@ export function App() {
     <SessionContext.Provider value={{ me, refresh }}>
       <Routes>
         <Route path="/login" element={me ? <Navigate to="/" replace /> : <LoginPage />} />
-        <Route path="/" element={<RequireUser>{<PortalPage />}</RequireUser>} />
+        <Route path="/" element={<RequireUser>{<LaunchPage />}</RequireUser>} />
+        <Route path="/account" element={<RequireUser>{<AccountPage />}</RequireUser>} />
         <Route path="/admin/*" element={<RequireUser admin>{<AdminPage />}</RequireUser>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

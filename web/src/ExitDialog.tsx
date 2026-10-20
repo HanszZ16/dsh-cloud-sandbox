@@ -4,7 +4,7 @@ import { api, type SandboxInfo } from './api.ts'
 import { progressOf, releaseAndWait } from './sandbox.ts'
 import { errorMessage, Modal } from './ui.tsx'
 
-/** Confirms, saves and releases the sandbox with a progress bar, then signs out. */
+/** Confirms, saves the workspace with a progress bar, then signs out. */
 export function ExitDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [info, setInfo] = useState<SandboxInfo | null>(null)
   const [running, setRunning] = useState(false)
@@ -26,7 +26,7 @@ export function ExitDialog({ onClose, onDone }: { onClose: () => void; onDone: (
   const progress = progressOf(info, 0)
   return (
     <Modal
-      title="保存并退出"
+      title="退出登录"
       onClose={running ? () => undefined : onClose}
       footer={
         running ? null : (
@@ -35,7 +35,7 @@ export function ExitDialog({ onClose, onDone }: { onClose: () => void; onDone: (
               取消
             </button>
             <button className="btn brand" onClick={exit}>
-              保存并退出
+              退出登录
             </button>
           </>
         )
@@ -45,8 +45,8 @@ export function ExitDialog({ onClose, onDone }: { onClose: () => void; onDone: (
         <ProgressBar percent={progress?.percent ?? 100} label={progress?.label ?? '正在退出'} />
       ) : (
         <div className="stack" style={{ gap: 8 }}>
-          <div>会先保存你的文件、会话、记忆和插件设置，再释放云电脑，然后退出登录。</div>
-          <div className="muted">正在运行的任务会被中断。下次登录启动云电脑后，一切会恢复原样。</div>
+          <div>退出前会保存你的工作空间，下次登录时一切会回到现在的样子。</div>
+          <div className="muted">正在进行的任务会被中断。</div>
           {error ? <div className="error-text">{error}</div> : null}
         </div>
       )}

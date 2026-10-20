@@ -47,13 +47,13 @@ export function RestartPrompt({
         failed.push(`${username}：${errorMessage(err)}`)
       }
     }
-    showToast(failed.length ? `部分重启失败：${failed.join('；')}` : `已开始重启 ${usernames.length} 台云电脑`)
+    showToast(failed.length ? `部分重启失败：${failed.join('；')}` : `已开始重启 ${usernames.length} 个工作空间`)
     onClose()
   }
 
   return (
     <Modal
-      title="配置已保存，需要重启云电脑才能生效"
+      title="配置已保存，重启工作空间后生效"
       onClose={onClose}
       footer={
         <>
@@ -68,7 +68,7 @@ export function RestartPrompt({
     >
       <div className="stack" style={{ gap: 10 }}>
         <div>
-          插件、MCP、资源和用户组的设置只在云电脑启动时读取。以下 {usernames.length} 位用户的云电脑正在运行，仍在使用旧配置：
+          插件、MCP、资源和用户组的设置在工作空间启动时读取。以下 {usernames.length} 位用户的工作空间正处于活跃状态，仍在使用旧配置：
         </div>
         <div className="chip-list">
           {usernames.map((name) => (
@@ -77,7 +77,7 @@ export function RestartPrompt({
             </span>
           ))}
         </div>
-        <div className="muted">立即重启会先保存他们的数据，再用新配置启动；他们正在进行的任务会被中断，dsh 页面需要刷新。</div>
+        <div className="muted">立即重启会先保存他们的工作空间，再用新配置启动，通常几秒钟；他们正在进行的任务会被中断，打开着的页面会自动重新连接。</div>
       </div>
     </Modal>
   )
@@ -85,5 +85,5 @@ export function RestartPrompt({
 
 /** Inline reminder shown inside editors whose changes apply on the next start. */
 export function RestartHint() {
-  return <div className="notice">保存后，正在运行的云电脑需要重启才会使用新配置；保存时会提示你是否立即重启。</div>
+  return <div className="notice">保存后，活跃的工作空间需要重启才会使用新配置；保存时会提示你是否立即重启。</div>
 }

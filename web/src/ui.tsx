@@ -12,11 +12,11 @@ export function FishLogo({ size = 24 }: { size?: number }) {
 }
 
 const STATUS_LABEL: Record<SandboxStatus, string> = {
-  running: '运行中',
-  starting: '启动中',
-  releasing: '正在保存',
-  stopped: '未运行',
-  failed: '启动失败',
+  running: '活跃',
+  starting: '恢复中',
+  releasing: '保存中',
+  stopped: '休眠',
+  failed: '打开失败',
 }
 
 export function StatusBadge({ status }: { status: SandboxStatus }) {

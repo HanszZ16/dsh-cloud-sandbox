@@ -1,31 +1,27 @@
 /*
- * dsh-cloud control button, injected by the gateway into every dsh Web page.
+ * Account menu for the workspace, injected by the gateway into every dsh Web page.
  *
- * A small button in the bottom-right corner opens a menu with "back to portal"
- * and "save and exit". Exit saves and releases the sandbox through the gateway
- * API with a progress bar, then signs out. It lives in a shadow root so dsh's
- * styles and its own do not interact; colors come from dsh's design tokens,
- * which inherit into the shadow tree.
+ * A round avatar in the bottom-right corner opens a menu: account settings (a
+ * panel showing /account in an iframe, without leaving the workspace), the admin
+ * console for administrators, and sign out (the workspace is saved first, with
+ * progress). It also watches the workspace: when it goes to sleep or restarts
+ * while the page is open, a cover explains that and offers to resume, instead of
+ * leaving dsh's connection errors on screen.
+ *
+ * Everything renders in a shadow root so dsh's styles and these do not interact;
+ * colors come from dsh's design tokens, which inherit into the shadow tree.
  */
 (() => {
   if (window.top !== window || document.getElementById('dsh-cloud-overlay')) return
 
-  const STEPS = {
-    starting: [
-      ['queued', '排队中', 0, 5, 0.5],
-      ['prepare', '读取你的数据', 5, 15, 0.5],
-      ['create', '创建云电脑', 15, 30, 1],
-      ['restore', '恢复文件和会话', 30, 45, 1],
-      ['boot', '启动 DeepSeek Harness', 45, 98, 5],
-    ],
-    releasing: [
-      ['queued', '排队中', 0, 5, 0.5],
-      ['stop', '停止 DeepSeek Harness 并写盘', 5, 35, 1.5],
-      ['archive', '打包文件和会话', 35, 65, 1],
-      ['save', '保存数据', 65, 85, 0.5],
-      ['destroy', '释放云电脑', 85, 98, 0.5],
-    ],
-  }
+  const SAVE_STEPS = [
+    ['queued', '准备保存', 0, 5, 0.5],
+    ['stop', '保存对话和设置', 5, 35, 1.5],
+    ['archive', '保存文件', 35, 65, 1],
+    ['save', '同步工作空间', 65, 85, 0.5],
+    ['destroy', '即将完成', 85, 98, 0.5],
+  ]
+  const WATCH_INTERVAL_MS = 10000
 
   const host = document.createElement('div')
   host.id = 'dsh-cloud-overlay'
@@ -35,135 +31,160 @@
   :host { all: initial; }
   [hidden] { display: none !important; }
   * { box-sizing: border-box; font-family: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif); }
-  .fab {
-    position: fixed; right: 16px; bottom: 16px; z-index: 2147483000;
-    display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px;
-    border: none; border-radius: 17px; cursor: pointer; font-size: 13px; color: #fff;
-    background: var(--dsw-static-deepseek-500, #4d6bfe);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
-  }
-  .fab:hover { background: var(--dsw-static-deepseek-450, #5686fe); }
-  .menu {
-    position: fixed; right: 16px; bottom: 58px; z-index: 2147483000; width: 220px; padding: 6px;
-    border-radius: var(--dsw-radius-md, 12px);
+  .surface {
     background: var(--dsw-alias-bg-layer-2, #fff); color: var(--dsw-alias-label-primary, #0f1115);
     box-shadow: var(--dsw-elevation-prominent, 0 8px 28px rgba(0, 0, 0, 0.16));
-    border: 0.5px solid var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.12));
   }
-  .menu[hidden], .layer[hidden] { display: none; }
-  .who { padding: 8px 10px 6px; font-size: 12px; color: var(--dsw-alias-label-tertiary, #8b8d91); }
+  .avatar {
+    display: inline-flex; align-items: center; justify-content: center; flex: none;
+    width: 32px; height: 32px; border-radius: 50%; font-size: 13px; font-weight: 500;
+    color: var(--dsw-alias-label-secondary, #555); background: var(--dsw-alias-bg-skeleton, #eceef1);
+  }
+  .fab {
+    position: fixed; right: 16px; bottom: 16px; z-index: 2147483000; padding: 2px; border: none; border-radius: 50%;
+    cursor: pointer; background: var(--dsw-alias-bg-layer-2, #fff);
+    box-shadow: var(--dsw-elevation-panel, 0 2px 10px rgba(0, 0, 0, 0.12));
+  }
+  .fab:hover .avatar { background: var(--dsw-alias-interactive-bg-hover, #e3e5e8); }
+  .menu {
+    position: fixed; right: 16px; bottom: 58px; z-index: 2147483000; width: 240px; padding: 6px;
+    border-radius: var(--dsw-radius-md, 12px);
+  }
+  .who { display: flex; align-items: center; gap: 10px; padding: 8px 8px 10px; }
+  .who b { display: block; font-size: 14px; font-weight: 500; }
+  .who small { display: block; font-size: 12px; color: var(--dsw-alias-label-tertiary, #8b8d91); }
+  .sep { height: 0.5px; margin: 4px 6px; background: var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.12)); }
   .item {
-    display: block; width: 100%; padding: 9px 10px; border: none; border-radius: 8px; text-align: left;
+    display: block; width: 100%; padding: 8px 10px; border: none; border-radius: 8px; text-align: left;
     background: transparent; color: inherit; font-size: 14px; cursor: pointer; text-decoration: none;
   }
   .item:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05)); }
-  .item small { display: block; font-size: 12px; color: var(--dsw-alias-label-tertiary, #8b8d91); }
-  .item.exit { color: var(--dsw-alias-state-error-primary, #e5484d); }
   .layer { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .mask { position: absolute; inset: 0; background: var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, 0.32)); }
-  .dialog {
-    position: relative; width: 100%; max-width: 440px; padding: 22px 24px 20px;
-    border-radius: var(--dsw-radius-panel, 28px);
-    background: var(--dsw-alias-bg-layer-2, #fff); color: var(--dsw-alias-label-primary, #0f1115);
-    box-shadow: var(--dsw-elevation-prominent, 0 12px 40px rgba(0, 0, 0, 0.2));
+  .dialog { position: relative; width: 100%; max-width: 420px; padding: 22px 24px 20px; border-radius: var(--dsw-radius-panel, 28px); }
+  .panel {
+    position: relative; display: flex; flex-direction: column; width: 100%; max-width: 600px;
+    height: min(760px, calc(100vh - 32px)); overflow: hidden; border-radius: var(--dsw-radius-panel, 28px);
   }
-  h2 { margin: 0 0 10px; font-size: 16px; font-weight: 500; }
-  p { margin: 0 0 6px; font-size: 14px; line-height: 22px; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 0 24px; }
+  .panel iframe { flex: 1; width: 100%; border: none; background: transparent; }
+  .close { width: 32px; height: 32px; border: none; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; font-size: 18px; }
+  .close:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05)); }
+  h2 { margin: 0; font-size: 16px; font-weight: 500; }
+  p { margin: 10px 0 0; font-size: 14px; line-height: 22px; }
   .muted { color: var(--dsw-alias-label-tertiary, #8b8d91); font-size: 13px; }
   .error { color: var(--dsw-alias-state-error-primary, #e5484d); font-size: 13px; }
-  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
   .btn { height: 36px; padding: 0 14px; border: none; border-radius: 12px; font-size: 14px; cursor: pointer; background: transparent; color: inherit; }
   .btn:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05)); }
   .btn.primary { color: #fff; background: var(--dsw-static-deepseek-500, #4d6bfe); }
   .btn.primary:hover { background: var(--dsw-static-deepseek-450, #5686fe); }
-  .progress { margin-top: 6px; }
-  .progress-head { display: flex; justify-content: space-between; font-size: 13px; color: var(--dsw-alias-label-secondary, #555); margin-bottom: 8px; }
-  .track { height: 8px; border-radius: 4px; overflow: hidden; background: var(--dsw-alias-bg-skeleton, rgba(0, 0, 0, 0.08)); }
-  .fill { height: 100%; width: 0; border-radius: 4px; transition: width 0.3s ease;
-    background: linear-gradient(90deg, var(--dsw-static-deepseek-500, #4d6bfe), var(--dsw-static-deepseek-400, #7aaaff)); }
+  .progress { margin-top: 16px; }
+  .progress-label { font-size: 13px; color: var(--dsw-alias-label-secondary, #555); margin-bottom: 10px; }
+  .track { height: 3px; border-radius: 2px; overflow: hidden; background: var(--dsw-alias-bg-skeleton, rgba(0, 0, 0, 0.08)); }
+  .fill { height: 100%; width: 0; border-radius: 2px; transition: width 0.3s ease; background: var(--dsw-static-deepseek-500, #4d6bfe); }
+  .cover {
+    position: fixed; inset: 0; z-index: 2147483002; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; padding: 24px; text-align: center; background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #0f1115);
+  }
+  .cover .logo { color: var(--dsw-static-deepseek-500, #4d6bfe); margin-bottom: 12px; }
+  .cover .logo.breathe { animation: breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe { 50% { opacity: 0.55; transform: scale(0.96); } }
+  .cover .title { font-size: 17px; font-weight: 500; }
+  .cover .btn { margin-top: 14px; }
 </style>
-<button class="fab" part="fab" title="云电脑">
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg>
-  云电脑
-</button>
-<div class="menu" hidden>
-  <div class="who"></div>
-  <a class="item" href="/">返回门户<small>云电脑继续运行</small></a>
-  <button class="item exit">保存并退出<small>保存数据，释放云电脑，退出登录</small></button>
+<button class="fab" title="账号"><span class="avatar fab-avatar"></span></button>
+<div class="menu surface" hidden>
+  <div class="who"><span class="avatar menu-avatar"></span><div><b class="name"></b><small class="username"></small></div></div>
+  <div class="sep"></div>
+  <button class="item open-account">账号设置</button>
+  <a class="item admin-link" href="/admin" hidden>管理后台</a>
+  <div class="sep"></div>
+  <button class="item sign-out">退出登录</button>
 </div>
-<div class="layer" hidden>
+<div class="layer account-layer" hidden>
   <div class="mask"></div>
-  <div class="dialog">
-    <h2>保存并退出</h2>
-    <div class="body">
-      <p>会先保存你的文件、会话、记忆和插件设置，再释放云电脑，然后退出登录。</p>
-      <p class="muted">正在运行的任务会被中断。下次登录启动云电脑后，一切会恢复原样。</p>
+  <div class="panel surface">
+    <div class="panel-head"><h2>账号设置</h2><button class="close" title="关闭">✕</button></div>
+    <iframe title="账号设置"></iframe>
+  </div>
+</div>
+<div class="layer exit-layer" hidden>
+  <div class="mask"></div>
+  <div class="dialog surface">
+    <h2>退出登录</h2>
+    <div class="exit-body">
+      <p>退出前会保存你的工作空间，下次登录时一切会回到现在的样子。</p>
+      <p class="muted">正在进行的任务会被中断。</p>
       <p class="error" hidden></p>
+      <div class="actions"><button class="btn cancel">取消</button><button class="btn primary confirm">退出登录</button></div>
     </div>
     <div class="progress" hidden>
-      <div class="progress-head"><span class="label"></span><span class="pct"></span></div>
+      <div class="progress-label"></div>
       <div class="track"><div class="fill"></div></div>
     </div>
-    <div class="actions">
-      <button class="btn cancel">取消</button>
-      <button class="btn primary confirm">保存并退出</button>
-    </div>
   </div>
+</div>
+<div class="cover" hidden>
+  <svg class="logo" width="48" height="36" viewBox="0 0 23.16 17.04" aria-hidden="true"><path fill="currentColor" d="M22.9168 1.43018C22.6713 1.31018 22.5658 1.53918 22.4223 1.65519C22.3733 1.69269 22.3318 1.74169 22.2903 1.78669C21.9317 2.1697 21.5127 2.42121 20.9657 2.39121C20.1657 2.34621 19.4827 2.59771 18.8787 3.20973C18.7502 2.45521 18.3236 2.0047 17.6746 1.71569C17.3351 1.56568 16.9916 1.41518 16.7536 1.08867C16.5876 0.856163 16.5421 0.597155 16.4591 0.341647C16.4061 0.187643 16.3536 0.0301382 16.1761 0.00363739C15.9836 -0.0263635 15.9081 0.135141 15.8326 0.270145C15.5306 0.822162 15.4136 1.43018 15.4251 2.0462C15.4516 3.43174 16.0366 4.53527 17.1991 5.3203C17.3311 5.4103 17.3651 5.5003 17.3236 5.63181C17.2441 5.90231 17.1501 6.16482 17.0671 6.43533C17.0141 6.60784 16.9351 6.64584 16.7501 6.57033C16.1121 6.30383 15.5611 5.90931 15.074 5.4328C14.2475 4.63328 13.5 3.75075 12.568 3.05973C12.349 2.89822 12.13 2.74822 11.9034 2.60522C10.9524 1.68169 12.028 0.923165 12.277 0.833162C12.5375 0.739159 12.3675 0.41615 11.5259 0.42015C10.6844 0.42365 9.91439 0.705658 8.93286 1.08117C8.78935 1.13767 8.63835 1.17867 8.48384 1.21267C7.59332 1.04367 6.66829 1.00617 5.70226 1.11517C3.88321 1.31768 2.43016 2.1777 1.36213 3.64575C0.0790928 5.4103 -0.222916 7.41536 0.146595 9.50642C0.535106 11.7105 1.66014 13.535 3.38869 14.9616C5.18125 16.4406 7.24581 17.1657 9.60138 17.0266C11.0319 16.9441 12.6245 16.7526 14.421 15.2321C14.874 15.4576 15.3496 15.5476 16.1381 15.6151C16.7456 15.6716 17.3306 15.5851 17.7836 15.4911C18.4931 15.3411 18.4441 14.6841 18.1876 14.5636C16.1081 13.595 16.5646 13.9891 16.1496 13.67C17.2061 12.42 18.8202 10.1979 19.3182 7.17235C19.3672 6.83834 19.4297 6.36783 19.4222 6.09732C19.4182 5.93231 19.4562 5.86831 19.6447 5.84931C20.1657 5.78931 20.6712 5.64681 21.1357 5.3913C22.4833 4.65528 23.0268 3.44624 23.1548 1.9972C23.1738 1.77569 23.1508 1.54668 22.9168 1.43018ZM11.1749 14.4736C9.15936 12.889 8.18184 12.3675 7.77832 12.39C7.40081 12.4125 7.46881 12.8445 7.55182 13.126C7.63882 13.404 7.75182 13.5955 7.91033 13.8396C8.01983 14.0011 8.09533 14.2411 7.80083 14.4216C7.15181 14.8231 6.02327 14.2866 5.97027 14.2601C4.65673 13.4865 3.5587 12.4655 2.78467 11.069C2.03715 9.72493 1.60314 8.28289 1.53164 6.74384C1.51264 6.37233 1.62214 6.24082 1.99215 6.17332C2.47916 6.08332 2.98118 6.06432 3.46769 6.13582C5.52476 6.43633 7.27581 7.35586 8.74385 8.8129C9.58188 9.64243 10.2159 10.634 10.8689 11.6025C11.5634 12.631 12.3105 13.611 13.262 14.4146C13.598 14.6961 13.866 14.9101 14.1225 15.0681C13.349 15.1546 12.058 15.1731 11.1749 14.4746L11.1749 14.4736Z"/></svg>
+  <div class="title cover-title"></div>
+  <div class="muted cover-sub"></div>
+  <button class="btn primary cover-action" hidden></button>
 </div>`
 
   const $ = (selector) => root.querySelector(selector)
-  const fab = $('.fab')
   const menu = $('.menu')
-  const layer = $('.layer')
+  const accountLayer = $('.account-layer')
+  const exitLayer = $('.exit-layer')
+  const cover = $('.cover')
   const errorLine = $('.error')
+  let exiting = false
 
-  fab.addEventListener('click', (event) => {
+  // Menu
+  $('.fab').addEventListener('click', (event) => {
     event.stopPropagation()
     menu.hidden = !menu.hidden
   })
+  menu.addEventListener('click', (event) => event.stopPropagation())
   document.addEventListener('click', () => {
     menu.hidden = true
   })
-  menu.addEventListener('click', (event) => event.stopPropagation())
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') menu.hidden = true
+    if (event.key !== 'Escape') return
+    menu.hidden = true
+    accountLayer.hidden = true
+    if (!exiting) exitLayer.hidden = true
   })
 
   fetch('/api/me', { credentials: 'same-origin' })
     .then((response) => (response.ok ? response.json() : null))
     .then((me) => {
-      if (me) $('.who').textContent = `${me.display_name || me.username} · ${me.username}`
+      if (!me) return
+      const name = me.display_name || me.username
+      const initial = name.slice(0, 1).toUpperCase()
+      $('.fab-avatar').textContent = initial
+      $('.menu-avatar').textContent = initial
+      $('.name').textContent = name
+      $('.username').textContent = me.username
+      $('.fab').title = name
+      $('.admin-link').hidden = me.role !== 'admin'
     })
     .catch(() => undefined)
 
-  $('.item.exit').addEventListener('click', () => {
+  // Account settings, without leaving the workspace
+  $('.open-account').addEventListener('click', () => {
     menu.hidden = true
-    errorLine.hidden = true
-    layer.hidden = false
+    $('iframe').src = '/account'
+    accountLayer.hidden = false
   })
-  $('.cancel').addEventListener('click', () => {
-    layer.hidden = true
-  })
-  $('.mask').addEventListener('click', () => {
-    if (!busy) layer.hidden = true
-  })
-
-  let busy = false
-  let shown = { info: null, at: 0 }
-
-  function render() {
-    const info = shown.info
-    const steps = info && STEPS[info.status]
-    if (!steps) return
-    const step = steps.find((s) => s[0] === info.phase) || steps[0]
-    const [, label, from, to, expected] = step
-    const elapsed = (info.phase_elapsed_s || 0) + (performance.now() - shown.at) / 1000
-    const percent = from + (to - from) * (1 - Math.exp(-elapsed / expected))
-    $('.label').textContent = label
-    $('.pct').textContent = `${Math.round(percent)}%`
-    $('.fill').style.width = `${percent}%`
+  const closeAccount = () => {
+    accountLayer.hidden = true
+    $('iframe').src = 'about:blank'
   }
+  $('.close').addEventListener('click', closeAccount)
+  accountLayer.querySelector('.mask').addEventListener('click', closeAccount)
 
+  // Sign out: save the workspace with progress, then end the session
   async function api(method, path) {
     const response = await fetch(path, { method, credentials: 'same-origin' })
     if (!response.ok) {
@@ -174,17 +195,42 @@
       } catch {
         // Not JSON: keep the status message.
       }
-      throw new Error(message)
+      const error = new Error(message)
+      error.status = response.status
+      throw error
     }
     return response.json()
   }
 
+  $('.sign-out').addEventListener('click', () => {
+    menu.hidden = true
+    errorLine.hidden = true
+    exitLayer.hidden = false
+  })
+  $('.cancel').addEventListener('click', () => {
+    exitLayer.hidden = true
+  })
+  exitLayer.querySelector('.mask').addEventListener('click', () => {
+    if (!exiting) exitLayer.hidden = true
+  })
+
+  let shown = { info: null, at: 0 }
+  function renderProgress() {
+    const info = shown.info
+    if (!info || info.status !== 'releasing') return
+    const step = SAVE_STEPS.find((s) => s[0] === info.phase) || SAVE_STEPS[0]
+    const [, label, from, to, expected] = step
+    const elapsed = (info.phase_elapsed_s || 0) + (performance.now() - shown.at) / 1000
+    $('.progress-label').textContent = label
+    $('.fill').style.width = `${from + (to - from) * (1 - Math.exp(-elapsed / expected))}%`
+  }
+
   $('.confirm').addEventListener('click', async () => {
-    busy = true
-    $('.body').hidden = true
-    $('.actions').hidden = true
+    exiting = true
+    $('.exit-body').hidden = true
     $('.progress').hidden = false
-    const ticker = window.setInterval(render, 120)
+    $('.progress-label').textContent = '正在保存你的工作空间'
+    const ticker = window.setInterval(renderProgress, 120)
     try {
       let info = await api('POST', '/api/me/sandbox/release')
       shown = { info, at: performance.now() }
@@ -193,21 +239,75 @@
         info = await api('GET', '/api/me/sandbox')
         shown = { info, at: performance.now() }
       }
-      $('.label').textContent = '已保存，正在退出'
-      $('.pct').textContent = '100%'
+      window.clearInterval(ticker)
+      $('.progress-label').textContent = '已保存'
       $('.fill').style.width = '100%'
       await api('POST', '/api/auth/logout')
       window.location.href = '/login'
     } catch (error) {
       window.clearInterval(ticker)
-      busy = false
+      exiting = false
       errorLine.textContent = `退出失败：${error.message}`
       errorLine.hidden = false
-      $('.body').hidden = false
-      $('.actions').hidden = false
+      $('.exit-body').hidden = false
       $('.progress').hidden = true
     }
   })
+
+  // Watch the workspace while the page is open
+  function showCover(title, sub, action, onAction, breathe) {
+    $('.cover-title').textContent = title
+    $('.cover-sub').textContent = sub
+    $('.cover .logo').classList.toggle('breathe', Boolean(breathe))
+    const button = $('.cover-action')
+    button.hidden = !action
+    button.textContent = action || ''
+    button.onclick = onAction || null
+    menu.hidden = true
+    accountLayer.hidden = true
+    $('.fab').hidden = true
+    cover.hidden = false
+  }
+
+  let wasUpdating = false
+  async function watch() {
+    if (exiting || document.visibilityState !== 'visible') return
+    let info
+    try {
+      info = await api('GET', '/api/me/sandbox')
+    } catch (error) {
+      if (error.status === 401) {
+        showCover('登录已失效', '请重新登录以继续使用你的工作空间。', '重新登录', () => {
+          window.location.href = '/login'
+        })
+      }
+      return
+    }
+    if (exiting) return
+    if (info.status === 'running') {
+      // Back from a restart: reload so dsh reconnects to the new instance.
+      if (wasUpdating) window.location.href = '/'
+      return
+    }
+    if (info.status === 'starting' || info.status === 'releasing') {
+      wasUpdating = true
+      showCover('正在更新你的工作空间', '马上就好，完成后会自动回到这里。', '', null, true)
+      return
+    }
+    showCover('工作空间已休眠', '你的文件、对话和设置都已保存。', '恢复工作空间', () => {
+      window.location.href = '/'
+    })
+  }
+  window.setInterval(() => {
+    watch()
+  }, WATCH_INTERVAL_MS)
+  document.addEventListener('visibilitychange', () => {
+    watch()
+  })
+  // While updating, check more often so the page comes back promptly.
+  window.setInterval(() => {
+    if (wasUpdating) watch()
+  }, 1500)
 
   const mount = () => document.body.appendChild(host)
   if (document.body) mount()

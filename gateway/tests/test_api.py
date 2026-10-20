@@ -165,3 +165,14 @@ def test_admin_password_reset_switch(tmp_path, backend):
     unchanged = dataclasses.replace(base, admin_password="third-pass")
     with TestClient(create_app(unchanged, backend)) as c:
         login(c, "root", "second-pass")
+
+
+def test_sleeping_workspace_sends_pages_to_the_launch_page_and_never_wakes_on_fetch(client, backend):
+    login(client, "root", "rootpass1")
+    page = client.get("/u/root/session/1?x=2", headers={"sec-fetch-mode": "navigate"}, follow_redirects=False)
+    assert page.status_code == 303
+    assert page.headers["location"] == "/?next=%2Fu%2Froot%2Fsession%2F1%3Fx%3D2"
+    fetch = client.get("/u/root/api/state", headers={"sec-fetch-mode": "cors"}, follow_redirects=False)
+    assert fetch.status_code == 503
+    assert backend.live == {}
+    assert client.get("/api/me").json()["workspace_saved"] is False

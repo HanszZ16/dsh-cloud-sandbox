@@ -205,7 +205,7 @@ function PluginEditor({ plugin, onClose, onSaved }: { plugin: Plugin | null; onC
           <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
         {kind === 'bundle' ? (
-          <Field label="插件包 spec" wide hint="pnpm add 接受的写法：npm 包名@版本、git 地址或 tarball URL。云电脑需要能访问对应的源。">
+          <Field label="插件包 spec" wide hint="pnpm add 接受的写法：npm 包名@版本、git 地址或 tarball URL。工作空间需要能访问对应的源。">
             <input className="input mono" value={spec} placeholder="@deepseek-ai/dsh-subagent-codex@0.2.1-rc.2" onChange={(e) => setSpec(e.target.value)} />
           </Field>
         ) : null}
@@ -240,7 +240,7 @@ function PluginEditor({ plugin, onClose, onSaved }: { plugin: Plugin | null; onC
                 <Field label="args（每行一个）">
                   <textarea className="input" rows={4} value={args} onChange={(e) => setArgs(e.target.value)} />
                 </Field>
-                <Field label="env（每行 KEY=VALUE）" hint="会写进云电脑里的配置文件，用户可读">
+                <Field label="env（每行 KEY=VALUE）" hint="会写进工作空间里的配置文件，用户可读">
                   <textarea className="input" rows={4} value={env} onChange={(e) => setEnv(e.target.value)} />
                 </Field>
               </>
@@ -249,7 +249,7 @@ function PluginEditor({ plugin, onClose, onSaved }: { plugin: Plugin | null; onC
                 <Field label="URL" wide>
                   <input className="input mono" value={url} placeholder="https://mcp.example.com/mcp" onChange={(e) => setUrl(e.target.value)} />
                 </Field>
-                <Field label="headers（每行 Name: Value）" wide hint="会写进云电脑里的配置文件，用户可读">
+                <Field label="headers（每行 Name: Value）" wide hint="会写进工作空间里的配置文件，用户可读">
                   <textarea className="input" rows={3} value={headers} onChange={(e) => setHeaders(e.target.value)} />
                 </Field>
               </>

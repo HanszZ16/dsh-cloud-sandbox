@@ -65,6 +65,9 @@ class SandboxManager:
     def backend(self) -> SandboxBackend:
         return self._backend
 
+    def has_saved_state(self, user_id: str) -> bool:
+        return self._store.exists(user_id)
+
     def _lock(self, user_id: str) -> asyncio.Lock:
         return self._locks.setdefault(user_id, asyncio.Lock())
 

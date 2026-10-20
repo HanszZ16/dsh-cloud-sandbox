@@ -679,87 +679,6 @@ td.actions {
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* Portal power panel: the one place to start, release, and enter the sandbox. */
-.power {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 22px 24px;
-  border-radius: var(--dsw-radius-xl);
-  border: 1px solid color-mix(in srgb, var(--dsw-static-deepseek-500) 45%, transparent);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--dsw-static-deepseek-500) 16%, transparent), transparent 60%),
-    var(--dsw-alias-settings-card-fill);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--dsw-static-deepseek-500) 14%, transparent);
-}
-.power.on {
-  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 55%, transparent);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent), transparent 60%),
-    var(--dsw-alias-settings-card-fill);
-  box-shadow: 0 8px 28px color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
-}
-.power-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-.power-icon {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  color: #fff;
-  background: var(--dsw-static-deepseek-500);
-}
-.power.on .power-icon {
-  background: var(--dsw-alias-state-success-primary);
-}
-.power-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.power-btn {
-  height: 44px;
-  padding: 0 22px;
-  font-size: 15px;
-  font-weight: 500;
-}
-.power-btn.start {
-  background: var(--dsw-static-deepseek-500);
-  color: #fff;
-}
-.power-btn.start:hover:not(:disabled) {
-  background: var(--dsw-static-deepseek-450);
-}
-.power-btn.release {
-  border: 1px solid var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-layer-1);
-}
-.power-btn.release:hover {
-  background: var(--dsw-alias-interactive-bg-hover-danger);
-  color: var(--dsw-alias-state-error-primary);
-}
-.power-btn.enter {
-  margin-left: auto;
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-}
-.power-btn.enter:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
-}
-@media (max-width: 560px) {
-  .power-btn,
-  .power-btn.enter {
-    flex: 1 1 100%;
-    margin-left: 0;
-  }
-}
-
 .progress {
   display: flex;
   flex-direction: column;
@@ -798,4 +717,90 @@ td.actions {
   line-height: 20px;
   color: var(--dsw-alias-state-warn-label);
   background: var(--dsw-alias-state-warn-tertiary);
+}
+
+/* Launch page between sign-in and the workspace */
+.launch {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--dsw-alias-bg-base);
+}
+.launch-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+.launch-logo {
+  color: var(--dsw-static-deepseek-500);
+  margin-bottom: 22px;
+  animation: breathe 2.4s ease-in-out infinite;
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.55;
+    transform: scale(0.96);
+  }
+}
+.launch-title {
+  font-size: 17px;
+  line-height: 26px;
+  font-weight: 500;
+}
+.launch-sub {
+  margin-top: 10px;
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.launch-track {
+  width: 220px;
+  height: 3px;
+  margin-top: 20px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-skeleton);
+}
+.launch-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--dsw-static-deepseek-500);
+  transition: width 0.3s var(--ds-ease-in-out);
+}
+.launch-detail {
+  max-width: 520px;
+  max-height: 160px;
+  overflow: auto;
+  margin-top: 14px;
+  padding: 10px 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+}
+.launch-foot {
+  position: fixed;
+  bottom: 24px;
+  font-family: var(--dsw-font-family-brand);
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.avatar.large {
+  width: 44px;
+  height: 44px;
+  font-size: 18px;
+}
+.portal.embedded {
+  max-width: none;
+  padding: 20px 20px 32px;
 }

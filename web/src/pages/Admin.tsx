@@ -13,7 +13,7 @@ const NAV = [
   { to: 'users', label: '用户' },
   { to: 'groups', label: '用户组' },
   { to: 'plugins', label: '插件与 MCP' },
-  { to: 'sandboxes', label: '运行中的云电脑' },
+  { to: 'sandboxes', label: '活跃工作空间' },
   { to: 'audit', label: '审计日志' },
 ]
 
@@ -76,7 +76,7 @@ function OverviewSection() {
   const max = Math.max(1, ...data.usage_by_day.map((d) => d.requests))
   const stats = [
     { label: '用户', value: data.users, note: data.disabled_users ? `${data.disabled_users} 个已停用` : '' },
-    { label: '运行中的云电脑', value: data.running_sandboxes },
+    { label: '活跃工作空间', value: data.running_sandboxes },
     { label: '今日模型请求', value: data.requests_today },
     { label: '今日 tokens', value: data.tokens_today },
     { label: '用户组', value: data.groups },
@@ -133,7 +133,7 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
     try {
       if (action === 'release') await api.releaseUserSandbox(username)
       else await api.restartUserSandbox(username)
-      showToast(action === 'release' ? `正在保存并释放 ${username} 的云电脑` : `正在重启 ${username} 的云电脑`)
+      showToast(action === 'release' ? `正在让 ${username} 的工作空间休眠` : `正在重启 ${username} 的工作空间`)
       reload()
     } catch (err) {
       showToast(errorMessage(err))
@@ -144,8 +144,8 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
     <div>
       <div className="page-head">
         <div>
-          <h2>运行中的云电脑</h2>
-          <p>释放和重启都会先保存用户数据。修改用户组、插件或用户分配后，重启即可让新配置生效。</p>
+          <h2>活跃工作空间</h2>
+          <p>休眠和重启都会先保存用户的工作空间。修改用户组、插件或用户分配后，重启即可让新配置生效。</p>
         </div>
         <button className="btn outline sm" onClick={reload}>
           刷新
@@ -184,7 +184,7 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
                         重启
                       </button>
                       <button className="btn danger sm" onClick={() => act(s.username, 'release')} disabled={s.status !== 'running'}>
-                        保存并释放
+                        休眠
                       </button>
                     </td>
                   </tr>
@@ -192,7 +192,7 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
               </tbody>
             </table>
           ) : (
-            <div className="empty">当前没有运行中的云电脑</div>
+            <div className="empty">当前没有活跃的工作空间</div>
           )}
         </div>
       )}
@@ -207,8 +207,8 @@ const ACTION_LABEL: Record<string, string> = {
   'change-password': '修改密码',
   'set-api-key': '设置 API Key',
   'clear-api-key': '删除 API Key',
-  'release-sandbox': '释放云电脑',
-  'restart-sandbox': '重启云电脑',
+  'release-sandbox': '工作空间休眠',
+  'restart-sandbox': '重启工作空间',
   'create-user': '创建用户',
   'update-user': '修改用户',
   'delete-user': '删除用户',
