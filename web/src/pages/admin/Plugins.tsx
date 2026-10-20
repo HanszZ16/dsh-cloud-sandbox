@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-import { api, type McpConfig, type Plugin, type PluginKind } from '../../api.ts'
+import { api, type Group, type McpConfig, type Plugin, type PluginKind } from '../../api.ts'
 import { errorMessage, Field, Modal } from '../../ui.tsx'
 import { Loading, useLoad } from '../Admin.tsx'
 import { RestartHint, RestartPrompt, runningAffected } from './RestartPrompt.tsx'
@@ -85,6 +85,7 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
                 <th>名称</th>
                 <th>类型</th>
                 <th>配置</th>
+                <th>已分配给</th>
                 <th />
               </tr>
             </thead>
@@ -101,6 +102,7 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
                   <td className="mono" style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {summary(p)}
                   </td>
+                  <td>{assignment(p, catalog.groups, catalog.users.filter((u) => u.plugin_ids.includes(p.id)).length)}</td>
                   <td className="actions">
                     <button className="btn ghost sm" onClick={() => setEditing(p)}>
                       编辑
@@ -121,10 +123,15 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
         <PluginEditor
           plugin={editing === 'new' ? null : editing}
           template={editing === 'new' ? template : null}
+          groups={catalog.groups}
           onClose={() => setEditing(null)}
-          onSaved={(message) => {
-            const affected =
-              editing === 'new' ? [] : runningAffected(catalog.users, catalog.groups, { pluginId: editing.id })
+          onSaved={(message, pluginId, touchedGroups) => {
+            const affected = [
+              ...new Set([
+                ...runningAffected(catalog.users, catalog.groups, { pluginId }),
+                ...touchedGroups.flatMap((groupId) => runningAffected(catalog.users, catalog.groups, { groupId })),
+              ]),
+            ]
             setEditing(null)
             showToast(message)
             setRestart(affected)
@@ -134,6 +141,17 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
       ) : null}
       {restart.length ? <RestartPrompt usernames={restart} onClose={() => setRestart([])} showToast={showToast} /> : null}
     </div>
+  )
+}
+
+function assignment(p: Plugin, groups: Group[], directUsers: number) {
+  const names = groups.filter((g) => g.plugin_ids.includes(p.id)).map((g) => g.name)
+  if (!names.length && !directUsers) return <span className="error-text">未分配，不会生效</span>
+  return (
+    <span>
+      {names.join('、')}
+      {directUsers ? <span className="muted">{names.length ? ' · ' : ''}{directUsers} 位用户单独分配</span> : null}
+    </span>
   )
 }
 
@@ -165,14 +183,19 @@ function fromLines(text: string, sep: string): Record<string, string> {
 function PluginEditor({
   plugin,
   template,
+  groups,
   onClose,
   onSaved,
 }: {
   plugin: Plugin | null
   template: Omit<Plugin, 'id'> | null
+  groups: Group[]
   onClose: () => void
-  onSaved: (m: string) => void
+  /** `touchedGroups`: groups whose assignment of this entry changed. */
+  onSaved: (message: string, pluginId: number, touchedGroups: number[]) => void
 }) {
+  const assigned = plugin ? groups.filter((g) => g.plugin_ids.includes(plugin.id)).map((g) => g.id) : []
+  const [groupIds, setGroupIds] = useState<number[]>(assigned)
   const initial = plugin ?? template
   const [kind, setKind] = useState<PluginKind>(initial?.kind ?? 'bundle')
   const [key, setKey] = useState(initial?.key ?? '')
@@ -202,9 +225,16 @@ function PluginEditor({
     setError(null)
     try {
       const body = { key, kind, name, description, config: config() }
-      if (plugin) await api.updatePlugin(plugin.id, body)
-      else await api.createPlugin(body)
-      onSaved(`已保存 ${name}`)
+      const saved = plugin ? await api.updatePlugin(plugin.id, body) : await api.createPlugin(body)
+      const touched: number[] = []
+      for (const group of groups) {
+        const wanted = groupIds.includes(group.id)
+        if (wanted === group.plugin_ids.includes(saved.id)) continue
+        const pluginIds = wanted ? [...group.plugin_ids, saved.id] : group.plugin_ids.filter((id) => id !== saved.id)
+        await api.updateGroup(group.id, { plugin_ids: pluginIds })
+        touched.push(group.id)
+      }
+      onSaved(groupIds.length || plugin ? `已保存 ${name}` : `已保存 ${name}，但还没有分配给任何用户组`, saved.id, touched)
     } catch (err) {
       setError(errorMessage(err))
     }
@@ -299,11 +329,27 @@ function PluginEditor({
             )}
           </>
         ) : null}
-        {plugin ? (
-          <div className="wide">
-            <RestartHint />
+        <div className="field wide">
+          <span>分配给用户组</span>
+          <div className="hint" style={{ marginBottom: 4 }}>只有分配了的用户组才会安装和启用它；也可以在「用户」里单独分配给某个人。</div>
+          <div className="stack" style={{ gap: 8 }}>
+            {groups.map((g) => (
+              <label key={g.id} className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={groupIds.includes(g.id)}
+                  onChange={(e) => setGroupIds(e.target.checked ? [...groupIds, g.id] : groupIds.filter((id) => id !== g.id))}
+                />
+                <span>
+                  {g.name} <span className="muted">· {g.user_count} 位用户</span>
+                </span>
+              </label>
+            ))}
           </div>
-        ) : null}
+        </div>
+        <div className="wide">
+          <RestartHint />
+        </div>
         {error ? <div className="error-text wide">{error}</div> : null}
       </div>
     </Modal>
