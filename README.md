@@ -1,143 +1,146 @@
 # dsh-cloud-sandbox
 
-为每个账号提供一个独立的**工作空间**：背后是一个隔离的沙箱，里面运行完整的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）Web。网关提供账号登录、账号设置和管理后台。
+English | [中文](README.zh.md)
 
-> **上线前必读：** 目前用户数据以 tar 快照的形式在休眠时保存。正式上线前应改为[每个用户一块持久卷](#上线前必做每个用户一块持久卷)。
+Gives every account its own **workspace**: an isolated sandbox running a complete [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) Web. A gateway provides sign-in, account settings, and an admin console.
 
-- **账号**：管理员创建账号，用户用用户名和密码登录；会话保存在服务端，可以强制下线。
-- **工作空间**：用户感知不到机器。登录后经过一个几秒的加载页，直接进入 dsh；会话、文件、记忆和自己装的插件一直都在。空闲、退出或超过最长时长时，工作空间自动保存并**休眠**（销毁沙箱、释放资源），下次打开时恢复到原来的样子。
-- **管理后台**：管理用户和用户组，按组或按人分配默认插件、MCP 服务和配置补丁，设置资源规格、模型权限、每日配额，查看用量和审计日志。
-- **模型 Key**：团队共享 key 和用户自己的 key 都只保存在网关（用户 key 加密存储），永远不进入沙箱。
+> **Read before launch:** user data is currently saved as a tar snapshot when a workspace goes to sleep. Before production, switch to [one persistent volume per user](#before-launch-one-persistent-volume-per-user).
 
-dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek-ai/dsh`。登录页、加载页、账号设置和管理后台用 React 编写，直接复用 dsh Web 的设计变量（颜色、圆角、字体、深色模式），和 dsh 界面风格一致。
+- **Accounts**: administrators create accounts; users sign in with a username and password. Sessions are stored on the server and can be revoked.
+- **Workspaces**: users never see a machine. After sign-in, a loading page of a few seconds leads straight into dsh, and conversations, files, memory, and the plugins they installed are always there. When idle, on sign-out, or after the maximum lifetime, the workspace is saved and **goes to sleep** (the sandbox is destroyed and its resources released); the next visit restores it exactly as it was.
+- **Admin console**: manage users and groups; assign default plugins, MCP servers, and config patches per group or per user; set resources, allowed models, and daily quotas; view usage and the audit log.
+- **Model keys**: the team's shared key and users' own keys stay on the gateway (user keys encrypted at rest) and never enter a sandbox.
 
-> 状态：PoC。Docker 后端已端到端验证（登录、加载页、账号设置、管理后台、插件和 MCP 下发、对话、退出保存、休眠与恢复、重启、孤儿回收）；E2B 后端已实现但**未用真实 key 验证**。
+dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm. The sign-in page, loading page, account settings, and admin console are written in React and reuse dsh Web's design tokens (colors, radii, fonts, dark mode), so they look like dsh.
 
-## 目录
+> Status: proof of concept. The Docker backend is verified end to end (sign-in, loading page, account settings, admin console, plugin and MCP provisioning, conversations, save on sign-out, sleep and resume, restart, orphan recovery). The E2B backend is implemented but **not verified with a real key**.
 
-- [架构](#架构)
-- [项目结构](#项目结构)
-- [环境要求](#环境要求)
-- [启动流程](#启动流程)
-- [使用方法](#使用方法)
-- [管理后台](#管理后台)
-- [插件、MCP 与配置补丁的下发](#插件mcp-与配置补丁的下发)
-- [用户数据存在哪里](#用户数据存在哪里)
-- [沙箱生命周期](#沙箱生命周期)
-- [请求流程](#请求流程)
-- [安全模型](#安全模型)
-- [配置项](#配置项)
-- [E2B 后端](#e2b-后端未验证)
-- [接入其他沙箱后端](#接入其他沙箱后端)
-- [开发与测试](#开发与测试)
-- [故障排查](#故障排查)
-- [已知限制与上线前待办](#已知限制与上线前待办)
+## Contents
 
-## 架构
+- [Architecture](#architecture)
+- [Project layout](#project-layout)
+- [Requirements](#requirements)
+- [Getting started](#getting-started)
+- [Using it](#using-it)
+- [Admin console](#admin-console)
+- [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
+- [Where user data lives](#where-user-data-lives)
+- [Sandbox lifecycle](#sandbox-lifecycle)
+- [Request flows](#request-flows)
+- [Security model](#security-model)
+- [Configuration](#configuration)
+- [E2B backend](#e2b-backend-unverified)
+- [Adding another sandbox backend](#adding-another-sandbox-backend)
+- [Development and tests](#development-and-tests)
+- [Troubleshooting](#troubleshooting)
+- [Known limitations and launch to-dos](#known-limitations-and-launch-to-dos)
+- [Before launch: one persistent volume per user](#before-launch-one-persistent-volume-per-user)
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    B[用户浏览器] -->|"/login、/、/admin（React）"| G
-    B -->|"/u/用户名/... HTTP + WebSocket"| G
-    subgraph G["网关 Python/FastAPI"]
-        A["/api 账号、加载、管理"]
-        P[反向代理]
-        M["SandboxManager<br/>启动 / 释放 / 空闲回收 / 孤儿回收"]
-        L["/llm 模型代理<br/>选 key、模型白名单、配额、用量"]
-        DB[("SQLite<br/>用户 用户组 插件目录<br/>会话 用量 审计")]
+    B[Browser] -->|"/login, /, /admin (React)"| G
+    B -->|"/u/username/... HTTP + WebSocket"| G
+    subgraph G["Gateway (Python/FastAPI)"]
+        A["/api accounts, launch, admin"]
+        P[Reverse proxy]
+        M["SandboxManager<br/>start / release / idle reaping / orphan recovery"]
+        L["/llm model proxy<br/>key selection, model allow-list, quotas, usage"]
+        DB[("SQLite<br/>users, groups, plugin catalog<br/>sessions, usage, audit")]
     end
     P --> S1
     P --> S2
-    subgraph S1[沙箱：alice]
-        D1["dsh --profile web<br/>--patch 管理员 overlay"] --- H1["/home/agent"]
+    subgraph S1[Sandbox: alice]
+        D1["dsh --profile web<br/>--patch admin overlay"] --- H1["/home/agent"]
     end
-    subgraph S2[沙箱：bob]
-        D2["dsh --profile web<br/>--patch 管理员 overlay"] --- H2["/home/agent"]
+    subgraph S2[Sandbox: bob]
+        D2["dsh --profile web<br/>--patch admin overlay"] --- H2["/home/agent"]
     end
-    D1 -->|临时 token| L
-    D2 -->|临时 token| L
-    L -->|共享 key 或用户自己的 key| DS[(api.deepseek.com)]
-    M <-->|保存 / 恢复 home.tar| ST[("状态存储<br/>state/用户名/")]
+    D1 -->|temporary token| L
+    D2 -->|temporary token| L
+    L -->|shared key or the user's own key| DS[(api.deepseek.com)]
+    M <-->|save / restore home.tar| ST[("State store<br/>state/username/")]
 ```
 
-整个方案做在 dsh 外面一层，而不是做成 dsh 插件：dsh 的文件系统和进程服务是整个进程共享的，插件无法按用户分配沙箱。所以每个用户运行一个独立的 dsh 进程，由网关负责编排它们的生命周期。
+The whole system sits one layer outside dsh rather than being a dsh plugin: dsh's filesystem and process services are shared by the whole process, so a plugin cannot give each user a separate sandbox. Each user therefore runs their own dsh process, and the gateway orchestrates their lifecycles.
 
-网关按 dsh 官方文档 [Publish the Web UI behind a reverse proxy](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/public-deployments.md) 的要求做反向代理：
+The gateway reverse-proxies dsh as required by dsh's guide [Publish the Web UI behind a reverse proxy](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/guide/public-deployments.md):
 
-| dsh 的要求 | 网关的做法 |
+| dsh requirement | What the gateway does |
 |---|---|
-| 保留浏览器发来的 Host | HTTP 和 WebSocket 都原样转发浏览器的 Host；`--trusted-host` 设为 `GATEWAY_PUBLIC_URL` 的主机名（loopback 地址 dsh 默认可信） |
-| 去掉挂载前缀 | `/u/<user>/api/x` 转发为 `/api/x` |
-| 转发 WebSocket 升级 | 双向转发，并统计连接数用于判断空闲 |
-| cookie 作用域限定在挂载路径下 | dsh 的 `Set-Cookie: Path=/` 改写为 `Path=/u/<user>/` |
-| 启动令牌换 cookie | 用户首次访问时，跳转到 dsh 打印的 `?token=` 链接，dsh 返回自己的会话 cookie |
+| Preserve the browser's Host | HTTP and WebSocket both forward the browser's Host; `--trusted-host` is the hostname of `GATEWAY_PUBLIC_URL` (dsh trusts loopback addresses by default) |
+| Strip the mount prefix | `/u/<user>/api/x` is forwarded as `/api/x` |
+| Forward WebSocket upgrades | Relayed both ways; connections are counted to decide idleness |
+| Scope cookies to the mount | dsh's `Set-Cookie: Path=/` is rewritten to `Path=/u/<user>/` |
+| Exchange the launch token for a cookie | On first visit the browser is redirected to the `?token=` URL dsh printed, and dsh sets its own session cookie |
 
-## 项目结构
+## Project layout
 
 ```
 dsh-cloud-sandbox/
-├── README.md
-├── sandbox-image/                 沙箱镜像
-│   ├── Dockerfile                 node:22 + @deepseek-ai/dsh + pnpm + git/python3，用户 agent
-│   ├── entrypoint.sh              安装 MCP 包 → 启动 dsh（带管理员 overlay）→ 后台安装默认插件
-│   └── provision.py               按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
-├── web/                           登录页、加载页、账号设置、管理后台（React + Vite + TypeScript）
-│   ├── src/theme/                 从 dsh 的 ui-theme 复制的设计变量和字体
-│   ├── src/pages/Login.tsx        登录页
-│   ├── public/dsh-cloud-overlay.js 注入到 dsh Web 页面的账号菜单（账号设置面板、管理后台、退出登录），以及"已休眠"提示层
-│   ├── src/sandbox.ts             工作空间状态轮询和启动/保存进度模型
-│   ├── src/pages/Launch.tsx       加载页：唤醒工作空间、细进度条、就绪后自动进入 dsh
-│   ├── src/pages/Account.tsx      账号设置：API Key、用量、预装插件、改密码（可嵌入 dsh 页面的面板）
-│   ├── src/pages/Admin.tsx        管理后台框架、概览、活跃工作空间、审计日志
-│   └── src/pages/admin/           用户、用户组、插件与 MCP；保存后提示重启受影响的工作空间
-└── gateway/                       网关（Python）
-    ├── run.sh                     启动脚本：读取 .env，启动 uvicorn
-    ├── .env.example               配置模板
+├── README.md / README.zh.md
+├── sandbox-image/                 Sandbox image
+│   ├── Dockerfile                 node:22 + @deepseek-ai/dsh + pnpm + git/python3, user agent
+│   ├── entrypoint.sh              Install MCP packages → start dsh (with the admin overlay) → install default plugins in the background
+│   └── provision.py               Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
+├── web/                           Sign-in, loading page, account settings, admin console (React + Vite + TypeScript)
+│   ├── src/theme/                 Design tokens and fonts copied from dsh's ui-theme
+│   ├── src/pages/Login.tsx        Sign-in page
+│   ├── public/dsh-cloud-overlay.js Injected into dsh Web pages: account entries in dsh's More menu, account panel, sign-out, and the "asleep" cover
+│   ├── src/sandbox.ts             Workspace status polling and the start/save progress model
+│   ├── src/pages/Launch.tsx       Loading page: wakes the workspace, thin progress bar, enters dsh when ready
+│   ├── src/pages/Account.tsx      Account settings: API key, usage, preinstalled plugins, password (embeddable as a panel in dsh)
+│   ├── src/pages/Admin.tsx        Admin shell, overview, active workspaces, audit log
+│   └── src/pages/admin/           Users, groups, plugins & MCP; offers to restart affected workspaces after saving
+└── gateway/                       Gateway (Python)
+    ├── run.sh                     Start script: loads .env, starts uvicorn
+    ├── .env.example               Configuration template
     ├── pyproject.toml / uv.lock
     ├── dsh_gateway/
-    │   ├── app.py                 路由：/u/<user>/ 代理、/llm 模型代理、前端页面
-    │   ├── api.py                 /api：登录、账号、工作空间状态、管理后台
-    │   ├── db.py                  SQLite：用户、用户组、插件目录、会话、用量、审计
-    │   ├── auth.py                密码哈希（scrypt）、会话 token、API key 加密
-    │   ├── policy.py              用户组和插件分配 → 沙箱的资源、policy.json、overlay
-    │   ├── gateway.py             共享状态，首次启动时创建默认用户组和管理员
-    │   ├── usage.py               从模型响应（含流式）里统计 token
-    │   ├── proxy.py               HTTP / WebSocket 转发，cookie 与跳转改写
-    │   ├── manager.py             每用户一个沙箱：启动、释放、空闲回收、孤儿回收
-    │   ├── store.py               用户快照存储（本地目录，可替换为对象存储）
-    │   ├── config.py              环境变量配置
+    │   ├── app.py                 Routes: /u/<user>/ proxy, /llm model proxy, web pages
+    │   ├── api.py                 /api: sign-in, account, workspace status, admin
+    │   ├── db.py                  SQLite: users, groups, plugin catalog, sessions, usage, audit
+    │   ├── auth.py                Password hashing (scrypt), session tokens, API key encryption
+    │   ├── policy.py              Groups and plugin assignments → sandbox resources, policy.json, overlay
+    │   ├── gateway.py             Shared state; creates the default group and administrator on first start
+    │   ├── usage.py               Token accounting from model responses (including streams)
+    │   ├── proxy.py               HTTP / WebSocket forwarding, cookie and redirect rewriting, overlay injection
+    │   ├── manager.py             One sandbox per user: start, release, idle reaping, orphan recovery
+    │   ├── store.py               Per-user snapshot store (local directory; replaceable by object storage)
+    │   ├── config.py              Environment configuration
     │   └── backends/
-    │       ├── base.py            SandboxBackend 接口
-    │       ├── docker_backend.py  Docker 实现（已验证）
-    │       └── e2b_backend.py     E2B 实现（未验证）
-    └── tests/                     单元测试（不需要 Docker）
+    │       ├── base.py            SandboxBackend interface
+    │       ├── docker_backend.py  Docker implementation (verified)
+    │       └── e2b_backend.py     E2B implementation (unverified)
+    └── tests/                     Unit tests (no Docker needed)
 ```
 
-## 环境要求
+## Requirements
 
-| 依赖 | 说明 |
+| Dependency | Notes |
 |---|---|
-| Docker | macOS 上用 OrbStack 或 Docker Desktop；Linux 见[故障排查](#故障排查) |
-| [uv](https://docs.astral.sh/uv/) | 管理网关的 Python 环境，Python ≥ 3.11 |
-| Node.js ≥ 22 + pnpm | 构建前端 |
-| DeepSeek API key | 在 [platform.deepseek.com](https://platform.deepseek.com) 获取；也可以不配共享 key，让每个用户在账号设置里填自己的 |
+| Docker | OrbStack or Docker Desktop on macOS; for Linux see [Troubleshooting](#troubleshooting) |
+| [uv](https://docs.astral.sh/uv/) | Manages the gateway's Python environment, Python ≥ 3.11 |
+| Node.js ≥ 22 + pnpm | Builds the web UI |
+| DeepSeek API key | From [platform.deepseek.com](https://platform.deepseek.com); optional if every user sets their own key in account settings |
 
-## 启动流程
+## Getting started
 
-### 1. 克隆仓库
+### 1. Clone
 
 ```sh
 git clone https://github.com/HanszZ16/dsh-cloud-sandbox.git
 cd dsh-cloud-sandbox
 ```
 
-### 2. 构建沙箱镜像
+### 2. Build the sandbox image
 
 ```sh
 docker build -t dsh-sandbox:dev sandbox-image
 ```
 
-国内网络安装 npm 包容易中断，可以通过本机代理构建（代理参数只在构建时生效，不会写进镜像）。下面的 `7897` 换成你的代理端口：
+If npm downloads keep failing (common on some networks), build through a local proxy. The proxy arguments apply only to the build and are not stored in the image. Replace `7897` with your proxy's port:
 
 ```sh
 docker build -t dsh-sandbox:dev sandbox-image \
@@ -145,346 +148,345 @@ docker build -t dsh-sandbox:dev sandbox-image \
   --build-arg https_proxy=http://host.docker.internal:7897
 ```
 
-要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.1-rc.2`。
+To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.1-rc.2`).
 
-### 3. 构建前端
+### 3. Build the web UI
 
 ```sh
 cd web
 pnpm install
-pnpm build          # 输出到 web/dist，网关直接提供这些文件
+pnpm build          # writes web/dist, which the gateway serves
 cd ..
 ```
 
-### 4. 配置网关
+### 4. Configure the gateway
 
 ```sh
 cd gateway
 cp .env.example .env
 ```
 
-编辑 `.env`，至少填写：
+Edit `.env` and set at least:
 
 ```sh
-GATEWAY_SECRET_KEY=<一个随机长字符串>   # python3 -c "import secrets;print(secrets.token_urlsafe(32))"
-GATEWAY_ADMIN_PASSWORD=<初始管理员密码>  # 首次启动时创建管理员账号 admin
-DEEPSEEK_API_KEY=sk-...                 # 团队共享 key，可选
+GATEWAY_SECRET_KEY=<a long random string>   # python3 -c "import secrets;print(secrets.token_urlsafe(32))"
+GATEWAY_ADMIN_PASSWORD=<initial admin password>  # creates the admin account on first start
+DEEPSEEK_API_KEY=sk-...                     # team-shared key, optional
 ```
 
-`GATEWAY_SECRET_KEY` 用来加密用户保存的 API key，**设置后不要再改**，否则已保存的用户 key 无法解密（用户需要重新填写）。`.env` 已被 `.gitignore` 排除。
+`GATEWAY_SECRET_KEY` encrypts the API keys users save. **Do not change it once set**, or saved user keys can no longer be decrypted (users would have to enter them again). `.env` is excluded by `.gitignore`.
 
-### 5. 启动网关
+### 5. Start the gateway
 
 ```sh
 ./run.sh
 ```
 
-`run.sh` 每次启动都会读取 `.env`，`.env` 里的值优先于终端里已有的同名环境变量。**修改 `.env` 后需要重启网关**。启动成功的日志：
+`run.sh` loads `.env` on every start, and its values override variables of the same name in your shell. **Restart the gateway after editing `.env`.** A successful start logs:
 
 ```
-INFO dsh_gateway: set administrator 'admin' from GATEWAY_ADMIN_PASSWORD   （仅首次）
+INFO dsh_gateway: set administrator 'admin' from GATEWAY_ADMIN_PASSWORD   (first start only)
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 ```
 
-### 6. 验证
+### 6. Verify
 
-1. 打开 http://localhost:8000 ，用 `admin` 和 `GATEWAY_ADMIN_PASSWORD` 登录；
-2. 进入工作空间后，点左侧栏底部的 **More** → **管理后台 → 用户**，新建一个普通用户；
-3. 退出，用新用户登录：加载页显示"正在准备你的工作空间"，几秒后自动进入 dsh；
-4. 第一次进入时 dsh 会显示预览说明，点 Continue；选择工作区时直接点 **Open**（即 `/home/agent`）；
-5. 发一条消息。管理后台**概览**里的"今日模型请求"会增加。
+1. Open http://localhost:8000 and sign in as `admin` with `GATEWAY_ADMIN_PASSWORD`;
+2. In the workspace, open **More** at the bottom of the left sidebar → **管理后台 (Admin console) → Users**, and create a regular user;
+3. Sign out and sign in as the new user: the loading page shows "preparing your workspace" and enters dsh after a few seconds;
+4. On first entry dsh shows a preview notice; click Continue. When asked for a workspace directory, click **Open** (that is `/home/agent`);
+5. Send a message. "Model requests today" on the admin **Overview** goes up.
 
-### 从旧版本升级
+### Upgrading from the earlier version
 
-旧版本（用户名直接登录）的数据仍在 `gateway/state/<用户名>/`。在管理后台用**同样的用户名**创建账号，登录后数据会原样恢复。`GATEWAY_LOGIN_PASSWORD` 已不再使用。
+Data from the earlier version (sign-in by username only) is still in `gateway/state/<username>/`. Create an account with **the same username** in the admin console, and that user's data is restored on sign-in. `GATEWAY_LOGIN_PASSWORD` is no longer used.
 
-## 使用方法
+## Using it
 
-面向用户的界面不出现"沙箱、容器、启动、释放"这些概念，只有**工作空间**，状态只有"活跃"和"休眠"。
+The user-facing UI never mentions sandboxes, containers, starting, or releasing: there is only the **workspace**, which is either active or asleep. (The UI copy is in Chinese; the quoted labels below are translations.)
 
-| 页面 / 操作 | 说明 |
+| Page / action | Behavior |
 |---|---|
-| `/login` | 登录页。账号由管理员创建 |
-| `/`（加载页） | 登录后自动到这里：唤醒工作空间，显示一条细进度条（"正在准备你的工作空间" / "正在恢复你的工作空间"），就绪后自动进入 dsh。打不开时只显示"工作空间暂时无法打开"和重试按钮，原始错误只给管理员看 |
-| dsh 左侧栏底部的 **More** 菜单 | 网关在 dsh 自己的菜单里加入：顶部显示当前用户，**账号设置**（在当前页面弹出面板，不离开工作空间）、**管理后台**（仅管理员），底部是**退出登录**。dsh 原有的 Sign in 改名为 **DeepSeek Sign in**（登录 DeepSeek 账号，和工作空间账号区分开） |
-| 账号设置（`/account`） | API Key、今日用量、团队预装的插件、修改密码 |
-| 退出登录 | 先保存工作空间（带进度），再退出，回到登录页 |
-| 页面开着时工作空间休眠了 | 页面盖上"工作空间已休眠，你的文件、对话和设置都已保存"，点**恢复工作空间**回到加载页。页面每 10 秒检查一次，切回标签页时也会检查 |
-| 页面开着时工作空间被管理员重启 | 通常几秒完成，dsh 自动重新连接，不需要刷新（dsh 的登录密钥保存在用户目录里，重启后旧 cookie 仍有效）；检查时恰好在重启中会显示"正在更新你的工作空间"，完成后自动回来 |
-| 直接关闭浏览器 | 工作空间保持活跃，空闲超过所在用户组的时限（默认 15 分钟）后自动保存并休眠 |
-| 旧页面在休眠后发请求 | 网关返回 503，不会把工作空间唤醒；只有打开页面（加载页）才会唤醒 |
+| `/login` | Sign-in page. Accounts are created by administrators |
+| `/` (loading page) | Where sign-in lands: wakes the workspace with a thin progress bar ("preparing your workspace" / "restoring your workspace") and enters dsh when ready. If it cannot open, it shows only "your workspace can't be opened right now" and a retry button; the raw error is shown to administrators only |
+| **More** menu at the bottom of dsh's left sidebar | The gateway adds to dsh's own menu: the signed-in user at the top, **Account settings** (a panel over the current page, without leaving the workspace), **Admin console** (administrators only), and **Sign out** at the bottom. dsh's own Sign in item is relabelled **DeepSeek Sign in** (signing in to a DeepSeek account, distinct from the workspace account) |
+| Account settings (`/account`) | API key, today's usage, plugins preinstalled by the team, password |
+| Sign out | Saves the workspace (with progress), signs out, and returns to the sign-in page |
+| Workspace goes to sleep while the page is open | The page is covered by "your workspace is asleep; your files, conversations, and settings are saved", with a **Resume workspace** button that returns to the loading page. The page checks every 10 seconds and when the tab becomes visible |
+| Admin restarts the workspace while the page is open | Usually done in seconds; dsh reconnects by itself without a reload (dsh's signing key lives in the user's home, so the old cookie stays valid after a restart). If a check lands mid-restart, the page shows "updating your workspace" and comes back automatically |
+| Closing the browser | The workspace stays active and is saved and put to sleep after the group's idle timeout (default 15 minutes) |
+| A stale page sends requests after sleep | The gateway answers 503 and does not wake the workspace; only opening a page (the loading page) wakes it |
 
-停止网关（`Ctrl+C`）时，所有活跃的工作空间都会先保存再休眠，最多等待 10 秒让浏览器的连接断开。
+Stopping the gateway (`Ctrl+C`) saves every active workspace and puts it to sleep, waiting at most 10 seconds for browser connections to close.
 
-## 管理后台
+## Admin console
 
-只有管理员能进入 `/admin`，所有修改都会写入审计日志。
+Only administrators can open `/admin`; every change is recorded in the audit log.
 
-| 页面 | 功能 |
+| Page | Function |
 |---|---|
-| 概览 | 用户数、活跃工作空间、今日请求和 tokens、近 14 天请求柱状图 |
-| 用户 | 新建、编辑（显示名、角色、用户组、停用、重置密码、单独分配插件）、删除（可选同时删除数据）；查看每人的工作空间状态和今日用量。停用或重置密码会让该用户的登录会话立即失效 |
-| 用户组 | 每个用户属于一个组。组决定：内存和 CPU 上限、空闲休眠时间、单次最长运行、能否使用共享 key、每日请求上限、允许的模型、默认插件 |
-| 插件与 MCP | 维护插件目录（三种类型，见下节），再到用户组或用户里分配 |
-| 活跃工作空间 | 查看状态（活跃 / 恢复中 / 保存中），单独重启或让其休眠 |
-| 审计日志 | 登录、退出、账号与配置的修改记录 |
+| Overview | Users, active workspaces, today's requests and tokens, a 14-day request chart |
+| Users | Create, edit (display name, role, group, disable, reset password, per-user plugins), delete (optionally with the user's data); see each user's workspace status and today's usage. Disabling a user or resetting their password ends their sessions immediately |
+| Groups | Every user belongs to one group. A group sets: memory and CPU limits, idle sleep timeout, maximum lifetime, whether the shared key may be used, daily request limit, allowed models, default plugins |
+| Plugins & MCP | Maintains the plugin catalog (three kinds, see the next section), which groups and users are then assigned from |
+| Active workspaces | Shows status (active / resuming / saving); restart one or put it to sleep |
+| Audit log | Sign-ins, sign-outs, and account and configuration changes |
 
-用户组、插件和用户分配的修改，在工作空间**下次启动时**生效。编辑器里有这条提醒；保存后如果有受影响的用户正处于活跃状态，会弹窗列出他们，可以选择**立即重启**（先保存，再用新配置启动，通常几秒；他们正在进行的任务会中断，打开着的页面会自动重连）。"活跃工作空间"页也可以单独重启某个用户或让其休眠，正在恢复和保存的工作空间也会显示在列表里。管理后台面向运维，所以保留了沙箱 id、运行时长、连接数等技术信息。
+Changes to groups, plugins, and user assignments apply the **next time a workspace starts**. Editors say so; after saving, if affected users have active workspaces, a dialog lists them and offers **Restart now** (save, then start with the new configuration, usually within seconds; their running tasks are interrupted and open pages reconnect by themselves). The Active workspaces page can also restart a single user or put their workspace to sleep, and lists workspaces that are resuming or saving. The admin console is for operators, so it keeps technical details such as sandbox ids, uptime, and connection counts.
 
-保护措施：至少保留一个启用的管理员；不能删除自己；默认用户组不能删除，组内有用户时不能删除。
+Safeguards: at least one enabled administrator must remain; you cannot delete yourself; the default group cannot be deleted, and a group with users cannot be deleted.
 
-## 插件、MCP 与配置补丁的下发
+## Provisioning plugins, MCP servers, and config patches
 
-管理员在目录里登记三种类型，网关在启动沙箱前把它们写成两个文件放进沙箱（root 所有、只读）：
+Administrators register three kinds of entries in the catalog. Before a sandbox starts, the gateway writes them into two files inside it (owned by root, read-only):
 
-| 类型 | 写入 | 在沙箱里怎么生效 | 用户能否去掉 |
+| Kind | Written to | How it takes effect in the sandbox | Can the user remove it? |
 |---|---|---|---|
-| dsh 插件（bundle） | `/etc/dsh-cloud/policy.json` | dsh 启动后在后台执行 `dsh plugin --profile web add <spec>` 并启用；dsh Web 的热加载让插件装好后自动出现 | 能。每个插件每个用户只装一次（记录在 `~/.dsh-cloud/provisioned.json`），用户删掉或关掉后不会被重新装上 |
-| MCP 服务 | `/etc/dsh-cloud/admin.cordis.yml` | 作为 `dsh --patch` overlay 插入一行 `@deepseek-ai/dsh-mcp-client`，每次启动都生效。可选填"安装包"（npm spec）：dsh 启动前为每个用户 `npm install -g` 一次，装进 `~/.local` 并随数据保存 | 不能，由管理员控制 |
-| 配置补丁 | 同上 | 原样追加到 overlay 的 Cordis 补丁行（按 id 覆盖或 insert），每次启动生效 | 不能 |
+| dsh plugin (bundle) | `/etc/dsh-cloud/policy.json` | After dsh starts, `dsh plugin --profile web add <spec>` runs in the background and selects the bundle; dsh Web's live reload shows the plugin once installed | Yes. Each plugin is installed once per user (recorded in `~/.dsh-cloud/provisioned.json`); once the user removes or disables it, it is not reinstalled |
+| MCP server | `/etc/dsh-cloud/admin.cordis.yml` | Inserts a `@deepseek-ai/dsh-mcp-client` row through the `dsh --patch` overlay, on every start. An optional "install package" (npm spec) is installed with `npm install -g` once per user before dsh starts, into `~/.local`, and saved with the user's data | No, controlled by administrators |
+| Config patch | Same file | Appended verbatim to the overlay as Cordis patch rows (override by id, or insert), on every start | No |
 
-dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 `cordis.patch.yml` → `--patch` overlay。管理员 overlay 最后应用，所以它明确设置的行优先于用户自己的设置；**用户自己在 dsh 里装的插件、开关、补丁都在 `/home/agent` 里，随快照保存，不受管理员下发影响**。
+dsh's configuration layers are: bundles → the profile's `cordis.patch.yml` → the home `cordis.patch.yml` → `--patch` overlays. The admin overlay applies last, so the rows it states win over the user's own settings. **Plugins, toggles, and patches the user sets in dsh live in `/home/agent`, are saved with the snapshot, and are untouched by admin provisioning.**
 
-几个要点：
+Notes:
 
-- **默认插件在后台安装**：登录不会等插件装完。安装期间 dsh 持有 profile 锁，用户这段时间在 dsh 里保存插件或设置会提示失败，装完后恢复（账号设置里有说明）。插件很大时（例如 Codex 子代理带原生二进制）首次安装可能需要几分钟。安装失败或被打断，下次启动自动重试。
-- **MCP 服务不要用 `npx`**：dsh 连接 stdio MCP 时会先启动一个探测进程再启动正式进程，两个 `npx` 同时安装会损坏 npx 缓存，并且这个损坏的缓存会随用户数据保存下来。请填写"安装包"，command 写安装包提供的命令名（例如 `@modelcontextprotocol/server-memory@2026.7.4` + `mcp-server-memory`），或者把 MCP 服务直接装进镜像。
-- **MCP 的 env 和 headers 用户可读**：它们写在沙箱里的 overlay 文件中，stdio MCP 进程本身也运行在用户沙箱里，所以不要在这里放不希望用户看到的密钥。需要保密的服务，应由网关代理（见待办）。
-- 首次进入沙箱需要安装的 npm 包和插件都通过 `SANDBOX_HTTP_PROXY` 出网（如果配置了）。
+- **Default plugins install in the background**: sign-in does not wait for them. During an install dsh holds the profile lock, so saving plugin or settings changes in dsh fails until it finishes (account settings mentions this). Large plugins (for example the Codex subagent with its native binary) can take a few minutes the first time. A failed or interrupted install is retried on the next start.
+- **Do not run MCP servers through `npx`**: for a stdio MCP server, dsh starts a probe process and then the serving process, so two concurrent `npx` installs corrupt the npx cache, and the corrupted cache is saved with the user's data. Use the "install package" field and set the command to the executable it provides (for example `@modelcontextprotocol/server-memory@2026.7.4` and `mcp-server-memory`), or install the server in the image.
+- **MCP env and headers are readable by the user**: they are written into the overlay inside the sandbox, and a stdio MCP process runs in the user's sandbox, so do not put secrets there that users must not see. Services that need secrets should be proxied by the gateway (see the to-dos).
+- npm packages and plugins installed on first entry go out through `SANDBOX_HTTP_PROXY` when it is set.
 
-## 用户数据存在哪里
+## Where user data lives
 
-沙箱里的 `/home/agent` 就是用户的整台电脑，作为一个整体保存和恢复。
+`/home/agent` in the sandbox is the user's whole computer and is saved and restored as one unit.
 
-| 数据 | 位置 | 是否持久 |
+| Data | Location | Persistent? |
 |---|---|---|
-| dsh 会话记录、设置、dsh 凭据、SQLite 存储 | 沙箱 `/home/agent/.dsh`（`DSH_HOME`） | ✅ 释放时进入快照，下次登录恢复 |
-| 用户自己装的 dsh 插件、开关、补丁 | `/home/agent/.dsh/profiles/web/` | ✅ 同上 |
-| 记忆（MCP 记忆服务的数据，例如 `~/.mcp-memory.jsonl`） | `/home/agent` 下 | ✅ 同上；配置 MCP 时请把数据路径放在 `/home/agent` 下 |
-| 用户文件、项目、npm 全局包（`NPM_CONFIG_PREFIX=~/.local`）、dotfiles | `/home/agent` | ✅ 同上 |
-| 已下发记录 | `/home/agent/.dsh-cloud/provisioned.json` | ✅ 同上 |
-| 系统目录（`/usr`、`/tmp`、apt 软件、pnpm 内容缓存 `/var/cache/pnpm-store`） | 沙箱镜像层 | ❌ 每次启动回到镜像初始状态 |
-| 快照文件 | 网关 `gateway/state/<用户名>/home.tar` | ✅ 原子写入（先写 `.partial` 再替换） |
-| 账号、用户组、插件目录、会话、用量、审计 | 网关 `gateway/data/gateway.db`（SQLite） | ✅ |
-| 用户自己的 API key | `gateway.db`，用 `GATEWAY_SECRET_KEY` 派生的密钥加密（Fernet） | ✅ 不进入沙箱 |
-| 共享 API key | 网关进程的环境变量 | 不进入沙箱 |
+| dsh sessions, settings, dsh credentials, SQLite stores | Sandbox `/home/agent/.dsh` (`DSH_HOME`) | ✅ Included in the snapshot on sleep, restored on the next visit |
+| Plugins, toggles, and patches the user set in dsh | `/home/agent/.dsh/profiles/web/` | ✅ Same |
+| Memory (data of an MCP memory server, e.g. `~/.mcp-memory.jsonl`) | Under `/home/agent` | ✅ Same; point MCP data paths under `/home/agent` |
+| User files, projects, global npm packages (`NPM_CONFIG_PREFIX=~/.local`), dotfiles | `/home/agent` | ✅ Same |
+| Provisioning record | `/home/agent/.dsh-cloud/provisioned.json` | ✅ Same |
+| System directories (`/usr`, `/tmp`, apt software, the pnpm content store `/var/cache/pnpm-store`) | Image layers | ❌ Back to the image's state on every start |
+| Snapshot files | Gateway `gateway/state/<username>/home.tar` | ✅ Written atomically (`.partial`, then rename) |
+| Accounts, groups, plugin catalog, sessions, usage, audit | Gateway `gateway/data/gateway.db` (SQLite) | ✅ |
+| Users' own API keys | `gateway.db`, encrypted (Fernet) with a key derived from `GATEWAY_SECRET_KEY` | ✅ Never enters a sandbox |
+| Shared API key | The gateway process's environment | Never enters a sandbox |
 
-## 沙箱生命周期
+## Sandbox lifecycle
 
-| 事件 | 动作 |
+| Event | Action |
 |---|---|
-| 用户打开加载页（登录后，或打开 `/u/<user>/` 时被转到加载页） | 创建容器（按用户组的内存、CPU）→ 写入 `home.tar` 和 `/etc/dsh-cloud` 下的两个文件 → 安装待装的 MCP 包 → 启动 dsh → 等待 dsh 打印启动链接（本机约 3–6 秒）→ 后台安装待装的默认插件 |
-| 用户退出登录 | 停止容器（SIGTERM，让 dsh 把存储写盘）→ 打包 `/home/agent` → 写入快照 → 删除容器 → 吊销该沙箱的模型 token |
-| 没有 WebSocket 连接，且空闲超过用户组的空闲时限 | 同上 |
-| 运行超过用户组的单次最长运行时间 | 同上，不管是否活跃 |
-| 管理员停用、删除账号，或在后台让其休眠 | 同上 |
-| 管理员在后台重启 | 同上，完成后立即用最新的用户组和插件配置重新启动 |
-| 网关重启（包括崩溃后重启） | 找出带本网关实例标签（`dsh-cloud.instance=<GATEWAY_INSTANCE_ID>`）的残留容器，先保存再删除 |
-| 保存失败 | **不删除容器**，记录错误日志，下次网关启动时作为残留容器重试，用户数据不会被丢弃 |
+| The user opens the loading page (after sign-in, or when `/u/<user>/` redirects there) | Create the container (with the group's memory and CPU) → write `home.tar` and the two files under `/etc/dsh-cloud` → install pending MCP packages → start dsh → wait for dsh to print its launch URL (about 3–6 s locally) → install pending default plugins in the background |
+| The user signs out | Stop the container (SIGTERM, so dsh flushes its stores) → archive `/home/agent` → write the snapshot → remove the container → revoke the sandbox's model token |
+| No WebSocket connection and idle longer than the group's idle timeout | Same |
+| Running longer than the group's maximum lifetime | Same, whether active or not |
+| An administrator disables or deletes the account, or puts the workspace to sleep | Same |
+| An administrator restarts the workspace | Same, then start again immediately with the latest group and plugin configuration |
+| Gateway restart (including after a crash) | Find leftover containers labelled with this gateway's instance (`dsh-cloud.instance=<GATEWAY_INSTANCE_ID>`), save them, then remove them |
+| Saving fails | **The container is kept** and the error logged; the next gateway start retries it as a leftover, so no user data is discarded |
 
-"活跃"的判断：浏览器的 HTTP 请求、WebSocket 消息，以及沙箱发出的模型请求都算活跃。所以用户关掉浏览器、agent 还在后台跑任务时，沙箱不会被回收。回收检查每 `SANDBOX_REAP_INTERVAL_S` 秒执行一次。
+What counts as activity: browser HTTP requests, WebSocket messages, and model requests from the sandbox. A running agent task therefore keeps the sandbox alive after the browser closes. The reaper runs every `SANDBOX_REAP_INTERVAL_S` seconds.
 
-## 请求流程
+## Request flows
 
-**登录**
-
-```
-浏览器 POST /api/auth/login {username, password}
-网关   → scrypt 校验密码 → 生成随机会话 token，数据库只存它的 SHA-256
-       → Set-Cookie: dshgw_session=<token>; HttpOnly; SameSite=Lax
-```
-
-**打开工作空间**
+**Sign-in**
 
 ```
-浏览器 GET /u/alice/...（休眠中）          → 网关：页面导航 → 303 /?next=...（加载页）；脚本请求 → 503，不唤醒
-加载页 POST /api/me/sandbox/start         → 后台启动；GET /api/me/sandbox 轮询阶段，就绪后跳回 /u/alice/
+Browser POST /api/auth/login {username, password}
+Gateway → verify the password with scrypt → create a random session token; the database stores only its SHA-256
+        → Set-Cookie: dshgw_session=<token>; HttpOnly; SameSite=Lax
 ```
 
-**进入 dsh（启动令牌换 cookie）**
+**Opening the workspace**
 
 ```
-浏览器 GET /u/alice/                     → 网关：页面导航且未见 dsh cookie → 303 /u/alice/?token=<dsh 启动令牌>
-浏览器 GET /u/alice/?token=...           → 网关转发 → dsh 返回 Set-Cookie: dsh-auth-...; Path=/
-                                         → 网关改写为 Path=/u/alice/ → 303 ./
-浏览器 GET /u/alice/                     → 带 dsh cookie，正常加载页面
-浏览器 WS  /u/alice/api/remote.mux       → 网关转发到沙箱的 /api/remote.mux
+Browser GET /u/alice/... (asleep)          → gateway: page navigation → 303 /?next=... (loading page); script request → 503, no wake-up
+Loading page POST /api/me/sandbox/start    → starts in the background; polls GET /api/me/sandbox for phases, then returns to /u/alice/
 ```
 
-跳转只保留路径和查询参数，不带主机名，所以用 `localhost` 或 `127.0.0.1` 访问都可以。
-
-网关转发 dsh 的 HTML 页面时，会在 `</head>` 前插入 `<script src="/dsh-cloud-overlay.js" defer>`（dsh 没有 CSP，本身也使用内联脚本）。这个脚本监听 dsh 左下角 More 菜单的出现（触发按钮带 `data-signed-out` 和 `aria-haspopup="menu"`），克隆 dsh 自己的菜单项插入账号入口，所以外观和原生菜单一致；dsh 的 Sign in / Sign out 项改名为 DeepSeek Sign in / DeepSeek Sign out。弹窗、面板和提示层渲染在 Shadow DOM 里，颜色取自 dsh 自己的设计变量。账号设置是一个嵌入 `/account` 的 iframe 面板；退出登录通过同源的 `/api/me/sandbox/release` 和 `/api/auth/logout` 完成；它还定时读取 `/api/me/sandbox`（不计入活跃时间），在工作空间休眠或重启时显示提示层。
-
-**启动和释放的进度**
-
-`POST /api/me/sandbox/start` 和 `POST /api/me/sandbox/release` 都立即返回，实际工作在后台进行；`GET /api/me/sandbox` 返回 `status`（`starting` / `releasing` / `running` / `stopped` / `failed`）、当前阶段 `phase` 和该阶段已用时间 `phase_elapsed_s`。前端按阶段把进度映射到区间，并在阶段内平滑推进。各后端通过 `start(spec, progress)` 和 `capture(handle, progress)` 上报阶段。
-
-**模型请求**
+**Entering dsh (launch token for a cookie)**
 
 ```
-沙箱里的 dsh → POST http://host.docker.internal:8000/llm/anthropic/v1/messages
-               x-api-key: dshgw-<该沙箱的临时 token>
-网关         → token 属于哪个用户 → 账号是否停用
-             → 选 key：用户自己的 key；没有则用共享 key（用户组允许时）
-             → 模型是否在用户组的白名单里；今日请求是否超过上限（超过返回 429）
-             → POST https://api.deepseek.com/anthropic/v1/messages（流式原样返回）
-             → 从响应里统计 input/output tokens，记入用量
+Browser GET /u/alice/                     → gateway: page navigation without a dsh cookie → 303 /u/alice/?token=<dsh launch token>
+Browser GET /u/alice/?token=...           → forwarded → dsh answers Set-Cookie: dsh-auth-...; Path=/
+                                          → gateway rewrites it to Path=/u/alice/ → 303 ./
+Browser GET /u/alice/                     → with the dsh cookie, the page loads
+Browser WS  /u/alice/api/remote.mux       → forwarded to the sandbox's /api/remote.mux
 ```
 
-如果用户在 dsh 自己的设置里填了 key（不是网关签发的 `dshgw-` token），网关原样转发、不计用量（可用 `LLM_ALLOW_PASSTHROUGH=0` 关闭）。
+Redirects keep only the path and query, never the host, so both `localhost` and `127.0.0.1` work.
 
-沙箱里设置的环境变量：
+When forwarding dsh's HTML pages, the gateway inserts `<script src="/dsh-cloud-overlay.js" defer>` before `</head>` (dsh sends no CSP and uses inline scripts itself). The script watches for dsh's More menu (its trigger carries `data-signed-out` and `aria-haspopup="menu"`) and clones dsh's own menu items to add the account entries, so they look native; dsh's Sign in / Sign out items are relabelled DeepSeek Sign in / DeepSeek Sign out. Dialogs, the panel, and the cover render in a Shadow DOM using dsh's own design tokens. Account settings is an iframe panel showing `/account`; sign-out uses the same-origin `/api/me/sandbox/release` and `/api/auth/logout`; and the script periodically reads `/api/me/sandbox` (which does not count as activity) to cover the page when the workspace sleeps or restarts.
 
-| 变量 | 值 |
+**Start and save progress**
+
+`POST /api/me/sandbox/start` and `POST /api/me/sandbox/release` return at once and do the work in the background. `GET /api/me/sandbox` returns `status` (`starting` / `releasing` / `running` / `stopped` / `failed`), the current `phase`, and the time spent in it, `phase_elapsed_s`. The UI maps each phase to a range of the progress bar and advances smoothly within it. Backends report phases through `start(spec, progress)` and `capture(handle, progress)`.
+
+**Model requests**
+
+```
+dsh in the sandbox → POST http://host.docker.internal:8000/llm/anthropic/v1/messages
+                     x-api-key: dshgw-<this sandbox's temporary token>
+Gateway            → which user owns the token → is the account disabled
+                   → pick a key: the user's own key, else the shared key (if the group allows it)
+                   → is the model on the group's allow-list; is today's request count over the limit (429 if so)
+                   → POST https://api.deepseek.com/anthropic/v1/messages (streamed back unchanged)
+                   → count input/output tokens from the response and record usage
+```
+
+If a user saved a key in dsh's own settings (anything other than a gateway-issued `dshgw-` token), the gateway forwards it unchanged and does not meter it (disable with `LLM_ALLOW_PASSTHROUGH=0`).
+
+Environment set inside each sandbox:
+
+| Variable | Value |
 |---|---|
-| `DEEPSEEK_API_KEY` | `dshgw-<随机>`，每次启动新签发，释放时吊销 |
+| `DEEPSEEK_API_KEY` | `dshgw-<random>`, issued on every start and revoked on release |
 | `DEEPSEEK_BASE_URL` | `<GATEWAY_SANDBOX_CALLBACK_URL>/llm/anthropic` |
-| `DEEPSEEK_SEARCH_BASE_URL` | `<GATEWAY_SANDBOX_CALLBACK_URL>/llm/anthropic/v1`（dsh 默认的 Messages 联网搜索） |
-| `HTTP(S)_PROXY`、`NO_PROXY` | 设置了 `SANDBOX_HTTP_PROXY` 时注入；`NO_PROXY` 包含回调网关的主机名 |
+| `DEEPSEEK_SEARCH_BASE_URL` | `<GATEWAY_SANDBOX_CALLBACK_URL>/llm/anthropic/v1` (dsh's default Messages web search) |
+| `HTTP(S)_PROXY`, `NO_PROXY` | Set when `SANDBOX_HTTP_PROXY` is configured; `NO_PROXY` includes the gateway's callback host |
 
-## 安全模型
+## Security model
 
-- **账号**：密码用 scrypt 加盐哈希；会话 token 随机生成，数据库只存哈希；停用账号或重置密码会删除该用户的全部会话；不存在的用户名和错误密码耗时相同。
-- **沙箱隔离**：每个用户一个容器，以非 root 用户 `agent`（uid 1001）运行，资源上限来自用户组，进程数上限 1024。
-- **端口**：dsh 的端口只发布在网关主机的 `127.0.0.1` 上，外部无法直接访问，只能经过网关。
-- **用户隔离**：访问 `/u/<user>/` 必须持有该用户的有效会话，否则跳回登录页；WebSocket 同样校验。
-- **凭据**：共享 key 和用户 key 都只在网关；网关登录 cookie 在转发前剥离；dsh 自己的 cookie 只在 `/u/<user>/` 路径下有效。
-- **管理员下发的边界**：管理员 overlay 里的行能保证生效，但用户在沙箱里有 shell，可以自己新增 MCP 或插件（这是设计如此）。真正需要强制的限制要放在沙箱外：模型只能经过网关（已做到）、出网白名单、敏感凭据不进沙箱。
-- **PoC 的不足**：容器出网不受限制；见[已知限制](#已知限制与上线前待办)。
+- **Accounts**: passwords are hashed with salted scrypt; session tokens are random and stored only as hashes; disabling an account or resetting its password deletes all its sessions; unknown usernames and wrong passwords take the same time.
+- **Sandbox isolation**: one container per user, running as the non-root user `agent` (uid 1001), with resource limits from the user's group and at most 1024 processes.
+- **Ports**: dsh's port is published only on the gateway host's `127.0.0.1` and is reachable only through the gateway.
+- **User isolation**: `/u/<user>/` requires that user's valid session, otherwise the browser goes back to sign-in; WebSockets are checked the same way.
+- **Credentials**: the shared key and user keys stay on the gateway; the gateway's session cookie is stripped before forwarding; dsh's own cookie is valid only under `/u/<user>/`.
+- **Limits of admin provisioning**: rows in the admin overlay are guaranteed to apply, but users have a shell in their sandbox and can add MCP servers or plugins themselves (by design). Restrictions that must be enforced belong outside the sandbox: models only through the gateway (done), an egress allow-list, and secrets kept out of sandboxes.
+- **Gaps in this PoC**: container egress is unrestricted; see [Known limitations](#known-limitations-and-launch-to-dos).
 
-## 配置项
+## Configuration
 
-所有配置都通过 `gateway/.env`（或环境变量）设置。用户组的资源、配额、模型权限在管理后台里改；下表里的 `SANDBOX_*` 资源项只是**首次启动时默认用户组的初始值**。
+Everything is set through `gateway/.env` (or the environment). Group resources, quotas, and model permissions are edited in the admin console; the `SANDBOX_*` resource values below are only **the default group's initial values on first start**.
 
-| 变量 | 默认值 | 说明 |
+| Variable | Default | Meaning |
 |---|---|---|
-| `GATEWAY_SECRET_KEY` | 每次启动随机生成 | 加密用户 API key 的密钥来源。**必须设置且保持不变** |
-| `GATEWAY_ADMIN_USERNAME` | `admin` | 没有任何启用的管理员时，启动时创建的管理员用户名 |
-| `GATEWAY_ADMIN_PASSWORD` | 空 | 上面这个管理员的密码；为空时不创建（日志会提示） |
-| `GATEWAY_ADMIN_RESET_PASSWORD` | 空 | 设为 `1` 时每次启动都把上面的密码重新写给该管理员（找回密码用，用完删掉） |
-| `GATEWAY_SESSION_TTL_S` | `604800`（7 天） | 登录会话有效期 |
-| `DEEPSEEK_API_KEY` | 空 | 团队共享 key；为空时只有填了自己 key 的用户能用模型 |
-| `DEEPSEEK_UPSTREAM` | `https://api.deepseek.com` | 模型代理转发的目标 |
-| `LLM_ALLOW_PASSTHROUGH` | `1` | 是否原样转发用户在 dsh 设置里填的 key |
-| `GATEWAY_PUBLIC_URL` | `http://localhost:8000` | 浏览器访问网关的地址，用作 dsh 的 `--public-url` 和 `--trusted-host` |
-| `GATEWAY_SANDBOX_CALLBACK_URL` | `http://host.docker.internal:<GATEWAY_PUBLIC_URL 的端口>` | 沙箱访问网关模型代理的地址 |
-| `GATEWAY_BIND` / `GATEWAY_PORT` | `127.0.0.1` / `8000` | 网关监听地址和端口（`run.sh` 使用）；改端口时同步修改 `GATEWAY_PUBLIC_URL` |
-| `GATEWAY_INSTANCE_ID` | `default` | 本网关的实例 id，写在容器标签上；同一台 Docker 上运行多个网关时，每个网关用不同的值，互不回收对方的沙箱 |
-| `GATEWAY_STATE_DIR` | `state` | 快照目录 |
-| `GATEWAY_DB_PATH` | `data/gateway.db` | 账号数据库 |
-| `GATEWAY_WEB_DIST` | `../web/dist` | 前端构建产物目录 |
-| `SANDBOX_BACKEND` | `docker` | `docker` 或 `e2b` |
-| `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Docker 后端使用的镜像 |
-| `SANDBOX_E2B_TEMPLATE` | 空 | E2B 后端必填 |
-| `SANDBOX_HTTP_PROXY` | 空 | 沙箱出网代理（安装插件、npm 包、联网工具），例如 `http://host.docker.internal:7897` |
-| `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | 默认用户组的初始资源 |
-| `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | 默认用户组的初始空闲时限和最长运行时间 |
-| `SANDBOX_REAP_INTERVAL_S` | `15` | 回收检查间隔 |
-| `SANDBOX_START_TIMEOUT_S` | `600` | 等待 dsh 启动的最长时间（包括首次安装 MCP 包） |
+| `GATEWAY_SECRET_KEY` | Random on every start | Source of the key that encrypts users' API keys. **Must be set and kept unchanged** |
+| `GATEWAY_ADMIN_USERNAME` | `admin` | Administrator created on start when no enabled administrator exists |
+| `GATEWAY_ADMIN_PASSWORD` | Empty | That administrator's password; when empty no administrator is created (the log says so) |
+| `GATEWAY_ADMIN_RESET_PASSWORD` | Empty | `1` re-applies the password above to that administrator on every start (password recovery; remove it afterwards) |
+| `GATEWAY_SESSION_TTL_S` | `604800` (7 days) | Sign-in session lifetime |
+| `DEEPSEEK_API_KEY` | Empty | Team-shared key; when empty, only users with their own key can use models |
+| `DEEPSEEK_UPSTREAM` | `https://api.deepseek.com` | Where the model proxy forwards |
+| `LLM_ALLOW_PASSTHROUGH` | `1` | Forward keys users saved in dsh's own settings unchanged |
+| `GATEWAY_PUBLIC_URL` | `http://localhost:8000` | Browser-facing address of the gateway; used as dsh's `--public-url` and `--trusted-host` |
+| `GATEWAY_SANDBOX_CALLBACK_URL` | `http://host.docker.internal:<port of GATEWAY_PUBLIC_URL>` | Address sandboxes use to reach the model proxy |
+| `GATEWAY_BIND` / `GATEWAY_PORT` | `127.0.0.1` / `8000` | Listen address and port (used by `run.sh`); change `GATEWAY_PUBLIC_URL` along with the port |
+| `GATEWAY_INSTANCE_ID` | `default` | This gateway's instance id, written to container labels; give each gateway on one Docker host its own value so they never reap each other's sandboxes |
+| `GATEWAY_STATE_DIR` | `state` | Snapshot directory |
+| `GATEWAY_DB_PATH` | `data/gateway.db` | Accounts database |
+| `GATEWAY_WEB_DIST` | `../web/dist` | Built web UI |
+| `SANDBOX_BACKEND` | `docker` | `docker` or `e2b` |
+| `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Image for the Docker backend |
+| `SANDBOX_E2B_TEMPLATE` | Empty | Required for the E2B backend |
+| `SANDBOX_HTTP_PROXY` | Empty | Egress proxy for sandboxes (plugin and npm installs, web tools), e.g. `http://host.docker.internal:7897` |
+| `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | Default group's initial resources |
+| `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | Default group's initial idle timeout and maximum lifetime |
+| `SANDBOX_REAP_INTERVAL_S` | `15` | Reaper interval |
+| `SANDBOX_START_TIMEOUT_S` | `600` | How long to wait for dsh to start (including first-time MCP package installs) |
 
-## E2B 后端（未验证）
+## E2B backend (unverified)
 
-`gateway/dsh_gateway/backends/e2b_backend.py` 按 E2B Python SDK 文档实现，**还没有用真实 key 运行过**。启用步骤：
+`gateway/dsh_gateway/backends/e2b_backend.py` follows the E2B Python SDK documentation but **has not run against a real key**. To enable it:
 
-1. 安装依赖：`cd gateway && uv sync --extra e2b`，并设置 `E2B_API_KEY`；
-2. 用 `sandbox-image/Dockerfile` 构建 E2B template，把 template id 填到 `SANDBOX_E2B_TEMPLATE`；
-3. 设置 `SANDBOX_BACKEND=e2b`；
-4. `GATEWAY_SANDBOX_CALLBACK_URL` 必须是 E2B 能访问到的公网地址，因为沙箱要回连网关的模型代理。
+1. Install the extra: `cd gateway && uv sync --extra e2b`, and set `E2B_API_KEY`;
+2. Build an E2B template from `sandbox-image/Dockerfile` and put its id in `SANDBOX_E2B_TEMPLATE`;
+3. Set `SANDBOX_BACKEND=e2b`;
+4. `GATEWAY_SANDBOX_CALLBACK_URL` must be a public address E2B can reach, because sandboxes call back into the model proxy.
 
-E2B 的入口按 Host 路由，所以这个后端会把 Host 和 Origin 一起改写成 E2B 的地址，并把它设为 dsh 的 `--trusted-host`。资源规格由 template 决定，用户组里的内存和 CPU 在 E2B 上不生效。需要验证的点：
+E2B's ingress routes by Host, so this backend rewrites Host and Origin together to the E2B address and sets it as dsh's `--trusted-host`. Resources come from the template; group memory and CPU do not apply on E2B. To verify:
 
-- dsh 绑定 `hostname -I` 的第一个地址后，E2B 的入口能否转发到；
-- 改写 Host/Origin 后，dsh 的同源校验能否通过；
-- 用 `runuser -u agent` 启动 dsh 后，环境变量是否完整传入；后台的插件安装进程能否正常退出。
+- whether E2B's ingress reaches dsh bound to the first address of `hostname -I`;
+- whether dsh's same-origin check passes after Host/Origin are rewritten;
+- whether the environment reaches dsh in full when started with `runuser -u agent`, and whether the background plugin installer exits cleanly.
 
-## 接入其他沙箱后端
+## Adding another sandbox backend
 
-Daytona、Kubernetes + gVisor/Kata、Firecracker 等，只需要实现 `backends/base.py` 里的 `SandboxBackend`：
+For Daytona, Kubernetes with gVisor/Kata, Firecracker, and so on, implement `SandboxBackend` in `backends/base.py`:
 
-| 方法 | 职责 |
+| Method | Responsibility |
 |---|---|
-| `start(spec, progress)` | 按 `spec.resources` 创建机器，恢复 `spec.restore` 里的快照，写入 `spec.files`（root 所有、只读），启动 dsh，等它开始监听 |
-| `launch_url(handle)` | 返回 dsh 启动时打印的带 token 链接 |
-| `capture(handle, progress)` | 停止 dsh 让存储写盘，返回 `{"home": <tar>}`；用 `progress("stop")`、`progress("archive")` 上报阶段 |
-| `destroy(handle)` | 释放机器的全部资源；机器已不存在时也要成功 |
-| `list_orphans()` | 列出本网关实例创建、但已不再跟踪的机器 |
-| `keepalive(handle)` | 可选：延长后端自己的超时（如 E2B） |
+| `start(spec, progress)` | Create the machine with `spec.resources`, restore the snapshot in `spec.restore`, write `spec.files` (root-owned, read-only), start dsh, and return once it listens |
+| `launch_url(handle)` | Return the tokenized URL dsh printed at startup |
+| `capture(handle, progress)` | Stop dsh so its stores are flushed and return `{"home": <tar>}`; report phases with `progress("stop")` and `progress("archive")` |
+| `destroy(handle)` | Release all of the machine's resources; must succeed when it is already gone |
+| `list_orphans()` | Machines this gateway instance created but no longer tracks |
+| `keepalive(handle)` | Optional: extend a backend-side timeout (e.g. E2B) |
 
-快照格式在各后端之间通用：一个以 `agent/` 为根的 tar，解压到 `/home`。`base.files_archive()` 把 `spec.files` 打成以 `/` 为根的 tar。然后在 `backends/__init__.py` 的 `create_backend` 里注册。
+The snapshot format is shared across backends: a tar rooted at `agent/`, extracted into `/home`. `base.files_archive()` packs `spec.files` into a tar rooted at `/`. Register the backend in `create_backend` in `backends/__init__.py`.
 
-## 开发与测试
+## Development and tests
 
 ```sh
 cd gateway
-uv run pytest          # 单元测试：账号与权限、插件下发、模型代理的 key 选择/白名单/配额/用量、代理改写、生命周期（假后端，不需要 Docker）
+uv run pytest          # unit tests: accounts and permissions, provisioning, the model proxy's key selection/allow-list/quotas/usage, proxy rewriting, lifecycle (fake backend, no Docker)
 
 cd ../web
 pnpm typecheck
-pnpm dev               # 前端热更新开发；/api 和 /u 转发到 GATEWAY_DEV_TARGET（默认 http://127.0.0.1:8000）
+pnpm dev               # web UI with hot reload; /api and /u are forwarded to GATEWAY_DEV_TARGET (default http://127.0.0.1:8000)
 ```
 
-本地手动调试时，可以把空闲阈值调小（在管理后台改用户组，或者首次启动前设置 `SANDBOX_IDLE_TIMEOUT_S=60`），观察回收过程。
+When debugging by hand, lower the idle timeout (edit the group in the admin console, or set `SANDBOX_IDLE_TIMEOUT_S=60` before the first start) to watch reaping.
 
-查看运行中的沙箱和它的日志（插件下发的日志以 `dsh-cloud provision:` 开头）：
+Inspect running sandboxes and their logs (provisioning lines start with `dsh-cloud provision:`):
 
 ```sh
 docker ps --filter label=dsh-cloud
-docker logs <容器名>
-docker exec -it <容器名> bash
+docker logs <container>
+docker exec -it <container> bash
 ```
 
-## 故障排查
+## Troubleshooting
 
-| 现象 | 原因与处理 |
+| Symptom | Cause and fix |
 |---|---|
-| 启动日志 `no administrator exists` | 没有设置 `GATEWAY_ADMIN_PASSWORD`。设置后重启网关 |
-| 管理员密码忘了 | 用另一个管理员在后台重置；或在 `.env` 设置新的 `GATEWAY_ADMIN_PASSWORD` 和 `GATEWAY_ADMIN_RESET_PASSWORD=1` 后重启（`GATEWAY_ADMIN_USERNAME` 会被重新启用并设为管理员），登录后把 `GATEWAY_ADMIN_RESET_PASSWORD` 删掉 |
-| 打开网关显示"前端尚未构建" | 在 `web/` 运行 `pnpm install && pnpm build` |
-| dsh 里模型报 `no API key` / `503` | 用户没有自己的 key，且用户组不允许共享 key 或网关没配 `DEEPSEEK_API_KEY`。在账号设置里填 key，或在用户组里打开共享 key |
-| dsh 里模型报 `429 daily request limit` | 达到用户组的每日请求上限 |
-| dsh 里模型报 `model ... is not allowed` | 模型不在用户组的白名单里 |
-| 模型请求返回 `401` | 沙箱的临时 token 已失效（例如沙箱被释放后旧页面还在请求）。刷新页面会启动新沙箱 |
-| 用户在 dsh 里保存设置提示失败 | 后台正在安装管理员分配的插件，dsh 持有 profile 锁。等安装完成（`docker logs` 里出现 `selected bundle`）再保存 |
-| 默认插件没出现 | `docker logs <容器>` 查看 `dsh-cloud provision:` 行；失败会在下次启动重试；需要出网的话设置 `SANDBOX_HTTP_PROXY` |
-| MCP 工具没出现，日志 `xxx: not found` | MCP 的 command 不存在。填写"安装包"，或把服务装进镜像；不要用 `npx`（见[下发](#插件mcp-与配置补丁的下发)） |
-| 用户保存的 API key 失效 | `GATEWAY_SECRET_KEY` 被改过，旧密文无法解密；恢复原值，或让用户重新填写 |
-| 网关重启后日志里出现一次 `WebSocket ... 403` | 正常现象：旧页面在沙箱启动前尝试重连 WebSocket，页面会自动重连，紧接着的 HTTP 请求会启动沙箱 |
-| 登录后又跳回登录页 | 确认用的是同一个主机名访问（在 `127.0.0.1` 登录的状态不会带到 `localhost`） |
-| 加载页显示"工作空间暂时无法打开" | 用管理员账号登录可在加载页看到原始错误（dsh 启动失败时附带它的日志），网关日志里也有；常见原因是镜像不存在（先执行第 2 步）或 Docker 没有运行 |
-| `docker build` 时 npm 报 `ECONNRESET` | 网络问题，按第 2 步使用代理构建 |
-| `failed to connect to the docker API` | Docker 没有运行；OrbStack 用户执行 `orb start` |
-| Linux 上沙箱访问不到模型代理 | Linux 上 `host.docker.internal` 指向 docker0 网桥，网关需要监听在该地址：`GATEWAY_BIND=0.0.0.0`（并用防火墙限制外部访问）或 docker0 的 IP |
+| Startup log says `no administrator exists` | `GATEWAY_ADMIN_PASSWORD` is not set. Set it and restart the gateway |
+| Administrator password forgotten | Have another administrator reset it; or set a new `GATEWAY_ADMIN_PASSWORD` and `GATEWAY_ADMIN_RESET_PASSWORD=1` in `.env` and restart (`GATEWAY_ADMIN_USERNAME` is re-enabled as an administrator), then remove `GATEWAY_ADMIN_RESET_PASSWORD` after signing in |
+| The gateway shows "page not built" | Run `pnpm install && pnpm build` in `web/` |
+| dsh reports `no API key` / `503` from the model | The user has no key of their own and the group disallows the shared key, or the gateway has no `DEEPSEEK_API_KEY`. Set a key in account settings, or allow the shared key for the group |
+| dsh reports `429 daily request limit` | The group's daily request limit is reached |
+| dsh reports `model ... is not allowed` | The model is not on the group's allow-list |
+| Model requests return `401` | The sandbox's temporary token is no longer valid (e.g. a stale page after the sandbox was released). Reloading starts a new sandbox |
+| Saving settings in dsh fails | A default plugin is installing in the background and dsh holds the profile lock. Save again after the install finishes (`selected bundle` appears in `docker logs`) |
+| A default plugin does not appear | Check the `dsh-cloud provision:` lines in `docker logs <container>`; failures are retried on the next start; set `SANDBOX_HTTP_PROXY` if the sandbox needs a proxy to reach the registry |
+| MCP tools missing, log shows `xxx: not found` | The MCP command does not exist. Fill in "install package" or install the server in the image; do not use `npx` (see [provisioning](#provisioning-plugins-mcp-servers-and-config-patches)) |
+| Users' saved API keys stopped working | `GATEWAY_SECRET_KEY` was changed and old ciphertexts cannot be decrypted; restore the old value or have users enter their keys again |
+| One `WebSocket ... 403` in the log after a gateway restart | Expected: a stale page tries to reconnect before its sandbox starts; it reconnects by itself |
+| Signing in bounces back to the sign-in page | Use the same hostname throughout (a sign-in on `127.0.0.1` does not carry over to `localhost`) |
+| The loading page says the workspace can't be opened | Sign in as an administrator to see the raw error on the loading page (with dsh's log when dsh failed to start); it is also in the gateway log. Common causes: the image does not exist (do step 2) or Docker is not running |
+| npm reports `ECONNRESET` during `docker build` | Network trouble; build through a proxy as in step 2 |
+| `failed to connect to the docker API` | Docker is not running; OrbStack users run `orb start` |
+| On Linux, sandboxes cannot reach the model proxy | On Linux `host.docker.internal` is the docker0 bridge, so the gateway must listen there: `GATEWAY_BIND=0.0.0.0` (with a firewall blocking outside access) or docker0's IP |
 
-## 已知限制与上线前待办
+## Known limitations and launch to-dos
 
-- **企业登录**：接入 OIDC/SSO（飞书、企业微信等）；目前只有用户名密码，没有登录失败限流；
-- **持久卷**：见下一节，上线前必做；
-- **快照存储**（如果暂时保留 tar 快照）：换成 S3/OSS，加版本保留和配额；
-- **出网与凭据**：限制沙箱出网（白名单）；需要保密的 MCP 服务由网关代理，凭据不进沙箱；
-- **用量**：目前按请求次数限额、按 token 统计；可以加 token 配额和计费；
-- **多实例**：网关的沙箱状态在内存里，多个网关共同服务同一批用户时需要把状态移到 Redis/数据库并加分布式锁（`GATEWAY_INSTANCE_ID` 只解决了互不回收）；
-- **体验**：dsh 第一次进入时要手动选择目录；预装插件的安装进度只在容器日志里，用户看不到；用户打开深层链接时如果 dsh 需要重新换 cookie，会回到 dsh 首页而不是原链接；
-- **规格**：加预热池降低冷启动时间；
-- **dsh 菜单注入**：账号入口依赖 dsh More 菜单的 DOM（触发按钮的 `data-signed-out`、菜单项 `role="menuitem"`、Sign in 的文字）。dsh 改版后若菜单里看不到账号设置和退出登录，需要调整 `web/public/dsh-cloud-overlay.js`；
-- **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.1-rc.2` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。
+- **Enterprise sign-in**: add OIDC/SSO; today there is only username and password, without rate limiting of failed sign-ins;
+- **Persistent volumes**: see the next section; required before launch;
+- **Snapshot storage** (if tar snapshots stay for now): move to S3/OSS with version retention and quotas;
+- **Egress and credentials**: restrict sandbox egress (allow-list); proxy MCP services that need secrets through the gateway so credentials stay out of sandboxes;
+- **Usage**: limits are per request and tokens are only counted; token quotas and billing can follow;
+- **Multiple instances**: sandbox state is in the gateway's memory; several gateways serving the same users need it in Redis or a database with distributed locks (`GATEWAY_INSTANCE_ID` only keeps gateways from reaping each other);
+- **Experience**: dsh asks for a directory on first entry; installation progress of preinstalled plugins is only in container logs; opening a deep link when dsh needs a new cookie lands on dsh's home page instead of the link;
+- **Capacity**: add a warm pool to cut cold-start time;
+- **dsh menu injection**: the account entries depend on the DOM of dsh's More menu (the trigger's `data-signed-out`, items with `role="menuitem"`, the Sign in label). If a dsh update leaves the menu without account settings and sign-out, adjust `web/public/dsh-cloud-overlay.js`;
+- **dsh version**: verified with `@deepseek-ai/dsh@0.2.1-rc.2`; dsh is still in preview, so after upgrading re-verify the reverse proxy, the launch-token flow, `--patch`, and `dsh plugin add`, and refresh the design tokens in `web/src/theme/`.
 
-## 上线前必做：每个用户一块持久卷
+## Before launch: one persistent volume per user
 
-**现状：** 每个用户的 `/home/agent` 在休眠时打包成 `home.tar` 保存，打开时再解压进新容器。这样做在 PoC 阶段足够，但有三个问题：
+**Today:** each user's `/home/agent` is archived into `home.tar` when the workspace sleeps and extracted into a new container when it opens. That is enough for a proof of concept, but it has three problems:
 
-- 两次保存之间的改动只在容器里。如果宿主机断电或容器异常退出，会丢失上次保存之后的数据（网关正常重启时会先保存，不受影响）；
-- 打包和解压的耗时随数据量增长，用户装的插件和项目越多，休眠和恢复就越慢；
-- 保存时要先停掉 dsh，才能拿到一致的数据，所以没法在运行中定期保存。
+- Changes since the last save exist only in the container. If the host loses power or the container dies unexpectedly, everything after the last save is lost (a normal gateway restart saves first and is not affected);
+- Archiving and extracting take longer as data grows: the more plugins and projects a user has, the slower sleep and resume become;
+- dsh must be stopped to get a consistent copy, so there is no way to save periodically while it runs.
 
-**上线时改成：** 每个用户一块持久卷。`/home/agent` 直接挂载持久磁盘，不再打包成 tar；休眠只是停止容器，恢复时重新挂载。这样"一直在、随时回来"才名副其实，恢复也更快。成熟产品通常是这种形态。
+**For launch:** give each user a persistent volume. Mount a persistent disk directly at `/home/agent` and stop archiving to tar; sleeping only stops the container, and resuming mounts the volume again. Only then does "always there, come back any time" truly hold, and resuming gets faster too. Mature products are usually built this way.
 
-**落地要点：**
+**How to implement it:**
 
-| 后端 | 做法 |
+| Backend | Approach |
 |---|---|
-| Docker（单机） | 每个用户一个命名卷（如 `dsh-home-<用户名>`），`containers.create(..., volumes={卷名: {"bind": "/home/agent", "mode": "rw"}})`；休眠时 `container.stop()` + `remove()`，卷保留 |
-| Kubernetes | 每个用户一个 PVC（StorageClass 选块存储，如云盘），Pod 挂载到 `/home/agent`；休眠时删除 Pod，保留 PVC；注意 PVC 和节点的可用区绑定 |
-| E2B 等托管沙箱 | 用平台的持久化 / 暂停能力（如 sandbox pause/resume 或挂载卷），或继续用快照但存到对象存储 |
+| Docker (single host) | One named volume per user (e.g. `dsh-home-<username>`): `containers.create(..., volumes={name: {"bind": "/home/agent", "mode": "rw"}})`; on sleep, `container.stop()` and `remove()`, keeping the volume |
+| Kubernetes | One PVC per user (a block-storage StorageClass, such as cloud disks), mounted at `/home/agent`; on sleep, delete the Pod and keep the PVC; mind that PVCs are bound to a node's availability zone |
+| E2B and other hosted sandboxes | Use the platform's persistence or pause features (e.g. sandbox pause/resume or mounted volumes), or keep snapshots but store them in object storage |
 
-需要改的代码：`backends/base.py` 的 `SandboxSpec.restore` 和 `capture()` 改为"挂载卷 / 不打包"（可以保留 tar 作为导出和备份功能）；`store.py` 改为管理卷的生命周期（创建、扩容、删除用户时删除卷）；`manager.py` 的休眠流程去掉打包步骤；管理后台删除用户时的"同时删除数据"改为删除卷。另外要补：卷的配额和监控、定期快照备份（云盘快照或 restic）、迁移脚本（把现有 `state/<用户名>/home.tar` 解压进对应的卷）。
-
+Code to change: in `backends/base.py`, turn `SandboxSpec.restore` and `capture()` into "mount the volume / don't archive" (tar can stay as an export and backup feature); make `store.py` manage the volume lifecycle (create, resize, delete with the user); drop the archive step from sleep in `manager.py`; make the admin console's "also delete data" delete the volume. Also add: volume quotas and monitoring, periodic backups (disk snapshots or restic), and a migration script that extracts each existing `state/<username>/home.tar` into the user's volume.
