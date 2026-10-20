@@ -85,6 +85,7 @@ class E2BBackend(SandboxBackend):
             user_id=spec.user_id,
             upstream_url=f"https://{host}",
             upstream_authority=host,
+            browser_url=f"https://{sbx.get_host(3081)}",
         )
 
     async def _wait_listening(self, sbx) -> None:

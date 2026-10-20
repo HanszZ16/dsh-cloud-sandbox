@@ -148,6 +148,54 @@ async def _relay(upstream: httpx.Response, user_id: str):
         log.info("sandbox response for %s ended early: %s", user_id, err)
 
 
+async def relay_websocket(websocket: WebSocket, record: SandboxRecord, uri: str) -> None:
+    """Relay a browser WebSocket to `uri` inside the sandbox (no Host or cookie forwarding)."""
+    try:
+        upstream = await ws_connect(uri, max_size=None, ping_interval=None, compression=None, proxy=None)
+    except Exception as err:
+        log.warning("sandbox websocket %s for %s failed: %s", uri, record.handle.user_id, err)
+        await websocket.close(code=1011)
+        return
+    await websocket.accept()
+    record.touch()
+
+    async def browser_to_sandbox() -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            # Operating the workspace browser counts as activity.
+            record.touch()
+            if message.get("bytes") is not None:
+                await upstream.send(message["bytes"])
+            elif message.get("text") is not None:
+                await upstream.send(message["text"])
+
+    async def sandbox_to_browser() -> None:
+        async for message in upstream:
+            if isinstance(message, bytes):
+                await websocket.send_bytes(message)
+            else:
+                await websocket.send_text(message)
+
+    tasks = [asyncio.create_task(browser_to_sandbox()), asyncio.create_task(sandbox_to_browser())]
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        for task in done:
+            error = task.exception()
+            if error is not None and not isinstance(error, (ConnectionClosed, WebSocketDisconnect)):
+                log.warning("websocket relay %s for %s ended with %r", uri, record.handle.user_id, error)
+    finally:
+        await upstream.close()
+        try:
+            await websocket.close()
+        except (RuntimeError, WebSocketDisconnect):
+            # The browser side already closed; nothing is left to close.
+            pass
+
+
 async def forward_websocket(websocket: WebSocket, record: SandboxRecord, path: str) -> None:
     handle = record.handle
     query = f"?{websocket.url.query}" if websocket.url.query else ""

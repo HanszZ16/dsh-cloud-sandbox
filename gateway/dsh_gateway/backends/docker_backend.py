@@ -54,10 +54,12 @@ class DockerBackend(SandboxBackend):
             await asyncio.to_thread(container.remove, force=True)
             raise
         port = container.ports["3080/tcp"][0]["HostPort"]
+        browser = (container.ports.get("3081/tcp") or [{}])[0].get("HostPort")
         return SandboxHandle(
             sandbox_id=container.id,
             user_id=spec.user_id,
             upstream_url=f"http://127.0.0.1:{port}",
+            browser_url=f"http://127.0.0.1:{browser}" if browser else None,
         )
 
     def _create(self, spec: SandboxSpec) -> Container:
@@ -69,7 +71,7 @@ class DockerBackend(SandboxBackend):
             name=f"dsh-sbx-{spec.user_id}-{secrets.token_hex(3)}",
             labels={_LABEL: "1", _LABEL_USER: spec.user_id, _LABEL_INSTANCE: self._instance_id},
             environment=env,
-            ports={"3080/tcp": ("127.0.0.1", None)},
+            ports={"3080/tcp": ("127.0.0.1", None), "3081/tcp": ("127.0.0.1", None)},
             extra_hosts={"host.docker.internal": "host-gateway"},
             mem_limit=spec.resources.mem_limit,
             nano_cpus=int(spec.resources.cpus * 1e9),

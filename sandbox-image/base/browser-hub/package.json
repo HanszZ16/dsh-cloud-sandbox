@@ -1,0 +1,9 @@
+{
+  "name": "dsh-cloud-browser-hub",
+  "private": true,
+  "type": "module",
+  "description": "Workspace browser hub: one Chromium shared by the agent (CDP) and the user (live view).",
+  "dependencies": {
+    "ws": "8.22.0"
+  }
+}

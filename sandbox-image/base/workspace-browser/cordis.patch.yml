@@ -1,0 +1,18 @@
+# dsh-cloud workspace browser bundle.
+#
+# The agent operates the workspace's single Chromium through Playwright MCP in
+# attach mode. The endpoint is the browser hub's agent proxy inside the sandbox
+# (sandbox-image/base/browser-hub), which starts Chromium on first use and lets
+# the user's live view show when the agent is operating. Only one dsh Session at
+# a time holds the attachment; a Session started while another holds it runs
+# without browser tools until the holder ends.
+- insert:
+    - id: dsh-cloud-browser-use
+      name: '@deepseek-ai/dsh-browser-use'
+    - id: dsh-cloud-browser-use-playwright
+      name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'
+      config:
+        mode: attach
+        endpoint: http://127.0.0.1:9223
+    - id: dsh-cloud-workspace-browser
+      name: dsh-cloud-workspace-browser

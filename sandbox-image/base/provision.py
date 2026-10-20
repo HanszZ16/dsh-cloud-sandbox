@@ -57,6 +57,11 @@ def dependencies() -> dict[str, str]:
     return read_json(PROFILE / "package.json", {}).get("dependencies", {})
 
 
+def is_bundle(package: str) -> bool:
+    manifest = read_json(PROFILE / "node_modules" / package / "package.json", {})
+    return isinstance(manifest.get("dsh"), dict) and "bundle" in manifest["dsh"]
+
+
 def select_bundle(package: str) -> None:
     manifest_path = PROFILE / "package.json"
     manifest = read_json(manifest_path, {})
@@ -99,8 +104,12 @@ def install_bundle(key: str, spec: str) -> bool:
         log(f"{spec} was already a profile dependency")
         added = [name for name in dependencies() if spec == name or spec.startswith(name + "@")]
     for package in added:
-        select_bundle(package)
-        log(f"selected bundle {package}")
+        if is_bundle(package):
+            select_bundle(package)
+            log(f"selected bundle {package}")
+        else:
+            # A plain plugin package: an admin config patch mounts its rows.
+            log(f"installed plugin package {package}")
     return True
 
 

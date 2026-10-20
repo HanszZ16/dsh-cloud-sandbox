@@ -24,6 +24,7 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Using it](#using-it)
 - [Admin console](#admin-console)
 - [Images: different software per group](#images-different-software-per-group)
+- [Workspace browser: watch and take over the agent's browser](#workspace-browser-watch-and-take-over-the-agents-browser)
 - [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
 - [Where user data lives](#where-user-data-lives)
 - [Sandbox lifecycle](#sandbox-lifecycle)
@@ -85,7 +86,9 @@ dsh-cloud-sandbox/
 │   ├── build.sh                   Builds the base image, then every team image in variants/ FROM it
 │   ├── base/                      Base image (also the default image)
 │   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + CJK fonts, user agent, compatibility labels
-│   │   ├── entrypoint.sh          Install MCP packages → start dsh (with the admin overlay) → install default plugins in the background
+│   │   ├── entrypoint.sh          Install MCP packages → start the browser hub and dsh (with the admin overlay) → install default plugins in the background; forwards stop signals to both
+│   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
+│   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Workspace browser"
 │   │   └── provision.py           Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
 │   └── variants/
 │       └── data-science/Dockerfile Example team image: the base plus numpy, pandas, scipy, matplotlib, scikit-learn
@@ -268,6 +271,30 @@ A workspace's **system software** comes from its image; **user data** (conversat
 
 The E2B backend treats the image reference as a template id and does not check labels; make sure templates are built from the same base image.
 
+## Workspace browser: watch and take over the agent's browser
+
+Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Workspace browser" tab of dsh's right sidebar, where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent.
+
+```
+Sandbox
+ ├─ Chromium (started on first use, headless; profile in ~/.config/dsh-workspace-browser, so logins persist with the workspace)
+ └─ Browser hub, sandbox-image/base/browser-hub
+      ├─ 127.0.0.1:9223  for the agent: a pass-through CDP proxy that Playwright MCP attaches to; passing through it is how "Agent is operating" is shown
+      └─ :3081           for the user: a small protocol for frames, tabs, and input (raw CDP is not exposed)
+Gateway  /u/<user>/_dsh-cloud/browser  →  :3081 (that user only)
+dsh      right-sidebar plugin dsh-cloud-workspace-browser: live view + address bar + back/forward/reload + tabs + status
+```
+
+**Enabling it:** in the admin console, **Plugins & MCP → 添加工作空间浏览器 (add workspace browser)** (the template fills in the spec `file:/usr/local/lib/dsh-cloud/workspace-browser`), then assign it to groups or users. It is a dsh bundle: on first start it installs `dsh-browser-use` and `dsh-experimental-browser-use-playwright-mcp` in the background (npm must be reachable, see `SANDBOX_HTTP_PROXY`) and mounts three rows: the browser service, Playwright MCP attached to the hub, and the right-sidebar plugin. Once installed, open **Workspace browser** from the guide page of dsh's right sidebar; in new sessions the agent has the `mcp__playwright-mcp__*` tools.
+
+**Notes:**
+
+- It uses Chrome DevTools Protocol page screencasting (`Page.startScreencast`) plus input forwarding, with no virtual display. The view shows page content; the browser's own chrome (address bar, tabs) is drawn by the plugin. alert/confirm/prompt dialogs from pages appear in the panel.
+- Only one dsh session at a time can hold the browser (a limit of Playwright MCP's attach mode): sessions started meanwhile have no browser tools until the holder ends.
+- You and the agent can act at the same time; the panel only signals "Agent is operating" and does not block the agent.
+- The right-sidebar plugin is written directly in dsh's client module format (`workspace-browser/client.js`) and uses dsh's pre-stable right-sidebar contract (`sidebarRightTabs`, the `sidebar.right.pane.tab` slot); re-verify after upgrading dsh.
+- dsh's built-in `ui-sidebar-browser` (the right-sidebar Browser) is something else: it opens pages in an iframe in the user's own browser, is unrelated to the agent, and `localhost` there means the user's own computer. It can be enabled separately with the config patch `- id: ui-sidebar-browser` / `disabled: false`, for reading pages beside the conversation.
+
 ## Provisioning plugins, MCP servers, and config patches
 
 Administrators register three kinds of entries in the catalog. Before a sandbox starts, the gateway writes them into two files inside it (owned by root, read-only):
@@ -295,6 +322,7 @@ Notes:
 |---|---|---|
 | dsh sessions, settings, dsh credentials, SQLite stores | Sandbox `/home/agent/.dsh` (`DSH_HOME`) | ✅ Included in the snapshot on sleep, restored on the next visit |
 | Plugins, toggles, and patches the user set in dsh | `/home/agent/.dsh/profiles/web/` | ✅ Same |
+| Workspace browser data (cookies, sign-ins, history) | `/home/agent/.config/dsh-workspace-browser` | ✅ Same |
 | Memory (data of an MCP memory server, e.g. `~/.mcp-memory.jsonl`) | Under `/home/agent` | ✅ Same; point MCP data paths under `/home/agent` |
 | User files, projects, global npm packages (`NPM_CONFIG_PREFIX=~/.local`), dotfiles | `/home/agent` | ✅ Same |
 | Provisioning record | `/home/agent/.dsh-cloud/provisioned.json` | ✅ Same |

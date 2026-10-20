@@ -226,3 +226,15 @@ def test_version_1_database_is_migrated(tmp_path):
     assert db.list_images() == []
     db.close()
     assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_workspace_browser_socket_is_for_the_owner_only(client):
+    from starlette.websockets import WebSocketDisconnect
+
+    login(client, "root", "rootpass1")
+    client.post("/api/admin/users", json={"username": "alice", "password": "alicepass"})
+    for path, code in (("/u/alice/_dsh-cloud/browser", 4401), ("/u/root/_dsh-cloud/browser", 4404)):
+        with pytest.raises(WebSocketDisconnect) as closed:
+            with client.websocket_connect(path) as ws:
+                ws.receive_text()
+        assert closed.value.code == code

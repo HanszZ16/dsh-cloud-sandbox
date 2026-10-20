@@ -69,6 +69,8 @@ class SandboxHandle:
     # When set, the gateway rewrites Host and Origin to this authority because the
     # backend's ingress routes by Host; otherwise the browser's Host is preserved.
     upstream_authority: str | None = None
+    # The workspace browser hub's viewer endpoint (http(s)://...), when reachable.
+    browser_url: str | None = None
 
 
 class SandboxBackend(ABC):

@@ -35,6 +35,16 @@ RUN npm config set fetch-retries 5 \
  && npm install -g @deepseek-ai/dsh@${DSH_VERSION} pnpm@${PNPM_VERSION} \
  && npm cache clean --force
 
+COPY browser-hub/package.json /usr/local/lib/dsh-cloud/browser-hub/package.json
+RUN cd /usr/local/lib/dsh-cloud/browser-hub \
+ && npm install --omit=dev --no-fund --no-audit \
+ && npm cache clean --force
+COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
+# The workspace browser dsh bundle; admins provision it to groups with the
+# spec file:/usr/local/lib/dsh-cloud/workspace-browser. Its dsh packages are
+# pinned to this image's dsh version.
+COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
+RUN sed -i "s/__DSH_VERSION__/${DSH_VERSION}/g" /usr/local/lib/dsh-cloud/workspace-browser/package.json
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
 COPY provision.py /usr/local/lib/dsh-cloud/provision.py
 # The pnpm content store lives outside /home/agent: installed plugins are
@@ -60,7 +70,8 @@ ENV DSH_HOME=/home/agent/.dsh \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
     PUPPETEER_SKIP_DOWNLOAD=1
 WORKDIR /home/agent
-EXPOSE 3080
+# 3080: dsh Web. 3081: workspace browser hub (live view), forwarded by the gateway.
+EXPOSE 3080 3081
 ENTRYPOINT ["dsh-sandbox-entrypoint"]
 # Compatibility labels, inherited by every team image. A user's home moves
 # between images of one group change, so the gateway only accepts images

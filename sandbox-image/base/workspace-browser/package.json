@@ -1,0 +1,27 @@
+{
+  "name": "dsh-cloud-workspace-browser",
+  "version": "0.1.0",
+  "description": "Workspace browser for dsh-cloud: the agent drives the workspace's Chromium through Playwright MCP, and the user watches and takes over from a right-Sidebar tab.",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-right"
+      ]
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-browser-use": "__DSH_VERSION__",
+    "@deepseek-ai/dsh-experimental-browser-use-playwright-mcp": "__DSH_VERSION__"
+  }
+}

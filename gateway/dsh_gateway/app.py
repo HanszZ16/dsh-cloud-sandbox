@@ -29,7 +29,7 @@ from .config import Settings, load_settings
 from .db import Database
 from .gateway import Gateway
 from .manager import SandboxManager
-from .proxy import forward_http, forward_websocket
+from .proxy import forward_http, forward_websocket, relay_websocket
 from .store import LocalStateStore
 from .usage import UsageMeter
 
@@ -111,6 +111,22 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
                 same_origin_target(await gw.manager.backend.launch_url(record.handle)), status_code=303
             )
         return await forward_http(request, request.app.state.sandbox_http, record, path, f"/u/{user_id}/")
+
+    # Registered before the catch-all below, which would otherwise forward it to dsh.
+    @app.websocket("/u/{user_id}/_dsh-cloud/browser")
+    async def workspace_browser_ws(websocket: WebSocket, user_id: str) -> None:
+        """The workspace browser's live view and input, for the signed-in owner only."""
+        gw = gw_of(websocket)
+        user = gw.session_user(websocket)
+        if user is None or user.username != user_id:
+            await websocket.close(code=4401)
+            return
+        record = gw.manager.get(user_id)
+        if record is None or record.handle.browser_url is None:
+            await websocket.close(code=4404)
+            return
+        uri = "ws" + record.handle.browser_url.removeprefix("http") + "/"
+        await relay_websocket(websocket, record, uri)
 
     @app.websocket("/u/{user_id}/{path:path}")
     async def sandbox_ws(websocket: WebSocket, user_id: str, path: str) -> None:
