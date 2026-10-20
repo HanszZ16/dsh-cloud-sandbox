@@ -23,6 +23,7 @@ dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek
 - [启动流程](#启动流程)
 - [使用方法](#使用方法)
 - [管理后台](#管理后台)
+- [镜像：按用户组提供不同的软件](#镜像按用户组提供不同的软件)
 - [插件、MCP 与配置补丁的下发](#插件mcp-与配置补丁的下发)
 - [用户数据存在哪里](#用户数据存在哪里)
 - [沙箱生命周期](#沙箱生命周期)
@@ -79,10 +80,14 @@ flowchart LR
 ```
 dsh-cloud-sandbox/
 ├── README.md / README.zh.md       英文 / 中文说明
-├── sandbox-image/                 沙箱镜像
-│   ├── Dockerfile                 node:22 + @deepseek-ai/dsh + pnpm + git/python3，用户 agent
-│   ├── entrypoint.sh              安装 MCP 包 → 启动 dsh（带管理员 overlay）→ 后台安装默认插件
-│   └── provision.py               按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
+├── sandbox-image/                 工作空间镜像
+│   ├── build.sh                   先构建基础镜像，再基于它构建 variants/ 下的每个团队镜像
+│   ├── base/                      基础镜像（也是默认镜像）
+│   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + 中文字体，用户 agent，兼容性标签
+│   │   ├── entrypoint.sh          安装 MCP 包 → 启动 dsh（带管理员 overlay）→ 后台安装默认插件
+│   │   └── provision.py           按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
+│   └── variants/
+│       └── data-science/Dockerfile 示例团队镜像：基础镜像 + numpy、pandas、scipy、matplotlib、scikit-learn
 ├── web/                           登录页、加载页、账号设置、管理后台（React + Vite + TypeScript）
 │   ├── src/theme/                 从 dsh 的 ui-theme 复制的设计变量和字体
 │   ├── src/pages/Login.tsx        登录页
@@ -133,21 +138,24 @@ git clone https://github.com/HanszZ16/dsh-cloud-sandbox.git
 cd dsh-cloud-sandbox
 ```
 
-### 2. 构建沙箱镜像
+### 2. 构建工作空间镜像
 
 ```sh
-docker build -t dsh-sandbox:dev sandbox-image
+sandbox-image/build.sh          # 生成 dsh-sandbox:dev（默认镜像）和 dsh-sandbox-data-science:dev
 ```
 
-国内网络安装 npm 包容易中断，可以通过本机代理构建（代理参数只在构建时生效，不会写进镜像）。下面的 `7897` 换成你的代理端口：
+只要默认镜像的话：`docker build -t dsh-sandbox:dev sandbox-image/base`。
+
+国内网络容易中断，可以让 apt 走国内 Debian 镜像站、npm 走本机代理（代理参数只在构建时生效，不会写进镜像）。下面的 `7897` 换成你的代理端口：
 
 ```sh
-docker build -t dsh-sandbox:dev sandbox-image \
+BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   --build-arg http_proxy=http://host.docker.internal:7897 \
-  --build-arg https_proxy=http://host.docker.internal:7897
+  --build-arg https_proxy=http://host.docker.internal:7897" \
+  sandbox-image/build.sh
 ```
 
-要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.1-rc.2`。
+要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.1-rc.2`。基础镜像约 2 GB（Chromium 和 LibreOffice 占了大部分），团队镜像只多出它额外安装的部分。
 
 ### 3. 构建前端
 
@@ -226,14 +234,38 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 |---|---|
 | 概览 | 用户数、活跃工作空间、今日请求和 tokens、近 14 天请求柱状图 |
 | 用户 | 新建、编辑（显示名、角色、用户组、停用、重置密码、单独分配插件）、删除（可选同时删除数据）；查看每人的工作空间状态和今日用量。停用或重置密码会让该用户的登录会话立即失效 |
-| 用户组 | 每个用户属于一个组。组决定：内存和 CPU 上限、空闲休眠时间、单次最长运行、能否使用共享 key、每日请求上限、允许的模型、默认插件 |
-| 插件与 MCP | 维护插件目录（三种类型，见下节），再到用户组或用户里分配 |
+| 用户组 | 每个用户属于一个组。组决定：镜像、内存和 CPU 上限、空闲休眠时间、单次最长运行、能否使用共享 key、每日请求上限、允许的模型、默认插件 |
+| 插件与 MCP | 维护插件目录（三种类型，见[下发](#插件mcp-与配置补丁的下发)），再到用户组或用户里分配 |
+| 镜像 | 登记团队镜像，检查是否存在且与默认镜像兼容；用户组从这里选择镜像（见[镜像](#镜像按用户组提供不同的软件)） |
 | 活跃工作空间 | 查看状态（活跃 / 恢复中 / 保存中），单独重启或让其休眠 |
 | 审计日志 | 登录、退出、账号与配置的修改记录 |
 
 用户组、插件和用户分配的修改，在工作空间**下次启动时**生效。编辑器里有这条提醒；保存后如果有受影响的用户正处于活跃状态，会弹窗列出他们，可以选择**立即重启**（先保存，再用新配置启动，通常几秒；他们正在进行的任务会中断，打开着的页面会自动重连）。"活跃工作空间"页也可以单独重启某个用户或让其休眠，正在恢复和保存的工作空间也会显示在列表里。管理后台面向运维，所以保留了沙箱 id、运行时长、连接数等技术信息。
 
 保护措施：至少保留一个启用的管理员；不能删除自己；默认用户组不能删除，组内有用户时不能删除。
+
+## 镜像：按用户组提供不同的软件
+
+工作空间的**系统软件**来自镜像，**用户数据**（对话、文件、记忆、插件、venv）来自用户自己的 `/home/agent`，两者在启动时组合。所以给用户组换镜像只改变"装了哪些软件"，用户的数据原样保留。
+
+| 需求 | 放在哪里 |
+|---|---|
+| 所有人都要的系统软件（Chromium、LibreOffice、字体） | 基础镜像 `sandbox-image/base` |
+| 某个团队要的系统软件或大型库 | 团队镜像 `sandbox-image/variants/<名称>`，在用户组里选择 |
+| 团队要的 dsh 插件、MCP | 管理后台的插件分配 |
+| 个人临时要的东西 | 用户自己装在 home 下：venv、`npm -g`、`~/.local`，随数据保存 |
+
+**规则：**
+
+- 团队镜像一律 `FROM` 基础镜像，用 root 安装软件，最后切回 `USER agent`；用户、路径、入口脚本、端口都由基础镜像定义，不要改。示例见 `variants/data-science/Dockerfile`。
+- 基础镜像带有标签 `dsh-cloud.contract`、`dsh-cloud.dsh-version`、`dsh-cloud.runtime`（Node 镜像，决定 Debian 和 Python 版本），团队镜像会继承它们。管理后台登记镜像时，网关会确认镜像存在（本机没有就拉取），并且这些标签和默认镜像一致，否则拒绝登记。原因是用户的 home 会在镜像之间切换，dsh 或 Python 版本不同会让会话、已装插件或 venv 失效。
+- 用不可变的标签（日期或版本号），不要用 `latest`。镜像地址登记后不能修改：升级就是登记新标签，再把用户组切过去。正在运行的工作空间继续用旧镜像，重启后才切换，方便灰度和回滚。
+- 升级 dsh 或换 Node / Debian 版本，等于升级基础镜像：用 `build.sh` 重建全部镜像，修改 `SANDBOX_DOCKER_IMAGE`，再逐个登记团队镜像的新标签。
+- 网关启动时会在后台预先拉取所有已登记的镜像，避免用户第一次使用时等待下载。
+
+**操作流程：** 用 `build.sh` 构建（生产环境推送到你的镜像仓库）→ 管理后台 **镜像 → 登记镜像** → **用户组 → 编辑 → 镜像** 选择它 → 保存后按提示重启受影响的工作空间。"活跃工作空间"页会显示每个工作空间当前使用的镜像。
+
+E2B 后端把镜像地址当作 template id，不做标签检查，需要自己保证 template 基于同一个基础镜像构建。
 
 ## 插件、MCP 与配置补丁的下发
 
@@ -265,7 +297,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | 记忆（MCP 记忆服务的数据，例如 `~/.mcp-memory.jsonl`） | `/home/agent` 下 | ✅ 同上；配置 MCP 时请把数据路径放在 `/home/agent` 下 |
 | 用户文件、项目、npm 全局包（`NPM_CONFIG_PREFIX=~/.local`）、dotfiles | `/home/agent` | ✅ 同上 |
 | 已下发记录 | `/home/agent/.dsh-cloud/provisioned.json` | ✅ 同上 |
-| 系统目录（`/usr`、`/tmp`、apt 软件、pnpm 内容缓存 `/var/cache/pnpm-store`） | 沙箱镜像层 | ❌ 每次启动回到镜像初始状态 |
+| 系统目录（`/usr`、`/tmp`、apt 软件、pnpm 内容缓存 `/var/cache/pnpm-store`） | 用户组选择的镜像 | ❌ 每次启动回到镜像初始状态；需要的系统软件请放进镜像（见[镜像](#镜像按用户组提供不同的软件)） |
 | 快照文件 | 网关 `gateway/state/<用户名>/home.tar` | ✅ 原子写入（先写 `.partial` 再替换） |
 | 账号、用户组、插件目录、会话、用量、审计 | 网关 `gateway/data/gateway.db`（SQLite） | ✅ |
 | 用户自己的 API key | `gateway.db`，用 `GATEWAY_SECRET_KEY` 派生的密钥加密（Fernet） | ✅ 不进入沙箱 |
@@ -275,7 +307,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 
 | 事件 | 动作 |
 |---|---|
-| 用户打开加载页（登录后，或打开 `/u/<user>/` 时被转到加载页） | 创建容器（按用户组的内存、CPU）→ 写入 `home.tar` 和 `/etc/dsh-cloud` 下的两个文件 → 安装待装的 MCP 包 → 启动 dsh → 等待 dsh 打印启动链接（本机约 3–6 秒）→ 后台安装待装的默认插件 |
+| 用户打开加载页（登录后，或打开 `/u/<user>/` 时被转到加载页） | 用用户组的镜像创建容器（按用户组的内存、CPU）→ 写入 `home.tar` 和 `/etc/dsh-cloud` 下的两个文件 → 安装待装的 MCP 包 → 启动 dsh → 等待 dsh 打印启动链接（本机约 3–6 秒）→ 后台安装待装的默认插件 |
 | 用户退出登录 | 停止容器（SIGTERM，让 dsh 把存储写盘）→ 打包 `/home/agent` → 写入快照 → 删除容器 → 吊销该沙箱的模型 token |
 | 没有 WebSocket 连接，且空闲超过用户组的空闲时限 | 同上 |
 | 运行超过用户组的单次最长运行时间 | 同上，不管是否活跃 |
@@ -389,7 +421,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 `gateway/dsh_gateway/backends/e2b_backend.py` 按 E2B Python SDK 文档实现，**还没有用真实 key 运行过**。启用步骤：
 
 1. 安装依赖：`cd gateway && uv sync --extra e2b`，并设置 `E2B_API_KEY`；
-2. 用 `sandbox-image/Dockerfile` 构建 E2B template，把 template id 填到 `SANDBOX_E2B_TEMPLATE`；
+2. 用 `sandbox-image/base/Dockerfile`（或团队镜像）构建 E2B template，把 template id 填到 `SANDBOX_E2B_TEMPLATE`；
 3. 设置 `SANDBOX_BACKEND=e2b`；
 4. `GATEWAY_SANDBOX_CALLBACK_URL` 必须是 E2B 能访问到的公网地址，因为沙箱要回连网关的模型代理。
 

@@ -9,6 +9,7 @@ Routes:
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import logging
@@ -52,6 +53,7 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
         gw.bootstrap()
         await manager.recover_orphans()
         manager.start_reaper()
+        app.state.prepull = asyncio.create_task(_prepull_images(gw))
         # Sandbox traffic is local or direct; never route it through a host proxy.
         app.state.sandbox_http = httpx.AsyncClient(timeout=None, trust_env=False, follow_redirects=False)
         app.state.llm_http = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=30))
@@ -63,6 +65,7 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
         try:
             yield
         finally:
+            app.state.prepull.cancel()
             await manager.shutdown()
             await app.state.sandbox_http.aclose()
             await app.state.llm_http.aclose()
@@ -200,6 +203,15 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
         return FileResponse(index, headers={"cache-control": "no-cache"})
 
     return app
+
+
+async def _prepull_images(gw: Gateway) -> None:
+    """Fetch every registered image in the background so a user's first start does not wait for a pull."""
+    for image in gw.db.list_images():
+        try:
+            await gw.manager.backend.inspect_image(image["ref"])
+        except Exception as err:
+            log.warning("image %s is not available: %s", image["ref"], err)
 
 
 def same_origin_target(url: str) -> str:

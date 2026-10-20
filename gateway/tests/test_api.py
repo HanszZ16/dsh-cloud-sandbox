@@ -176,3 +176,53 @@ def test_sleeping_workspace_sends_pages_to_the_launch_page_and_never_wakes_on_fe
     assert fetch.status_code == 503
     assert backend.live == {}
     assert client.get("/api/me").json()["workspace_saved"] is False
+
+
+def test_group_image_must_match_the_default_and_reaches_the_sandbox(client, backend):
+    base = backend.images[None]
+    backend.images["team/ds:1"] = {**base}
+    backend.images["team/old:1"] = {**base, "dsh-cloud.dsh-version": "0.1.0"}
+    backend.images["random/ubuntu"] = {}
+    login(client, "root", "rootpass1")
+
+    assert "不是工作空间镜像" in client.post("/api/admin/images", json={"name": "u", "ref": "random/ubuntu"}).json()["detail"]
+    assert "dsh 版本" in client.post("/api/admin/images", json={"name": "o", "ref": "team/old:1"}).json()["detail"]
+    assert client.post("/api/admin/images", json={"name": "x", "ref": "team/missing:1"}).status_code == 400
+    image = client.post("/api/admin/images", json={"name": "数据科学", "ref": "team/ds:1"}).json()
+    assert image["dsh_version"] == "0.2.1-rc.2"
+    assert client.patch(f"/api/admin/images/{image['id']}", json={"ref": "team/ds:2"}).status_code == 400
+
+    group = client.get("/api/admin/groups").json()[0]
+    client.patch(f"/api/admin/groups/{group['id']}", json={"image_id": image["id"]})
+    assert client.delete(f"/api/admin/images/{image['id']}").status_code == 400
+    client.post("/api/me/sandbox/start")
+    (spec,) = backend.live.values()
+    assert spec.image == "team/ds:1"
+    assert client.get("/api/me/sandbox").json()["image"] == "team/ds:1"
+
+    client.patch(f"/api/admin/groups/{group['id']}", json={"image_id": 0})
+    assert client.get("/api/admin/groups").json()[0]["image_id"] is None
+    assert client.delete(f"/api/admin/images/{image['id']}").status_code == 200
+
+
+def test_version_1_database_is_migrated(tmp_path):
+    import sqlite3
+
+    from dsh_gateway.db import _SCHEMA, Database
+
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(_SCHEMA)
+    old.execute(
+        "INSERT INTO groups (name, mem_limit, cpus, idle_timeout_s, max_lifetime_s) VALUES ('default', '2g', 2, 900, 3600)"
+    )
+    old.execute("PRAGMA user_version=1")
+    old.commit()
+    old.close()
+
+    db = Database(path)
+    (group,) = db.list_groups()
+    assert group["name"] == "default" and group["image_id"] is None
+    assert db.list_images() == []
+    db.close()
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 2

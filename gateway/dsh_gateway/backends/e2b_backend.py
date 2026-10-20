@@ -48,7 +48,7 @@ class E2BBackend(SandboxBackend):
     async def start(self, spec: SandboxSpec, progress: Progress = no_progress) -> SandboxHandle:
         progress("create")
         sbx = await self._sandbox_cls.create(
-            template=self._template,
+            template=spec.image or self._template,
             timeout=self._e2b_timeout_s,
             metadata={_METADATA_KEY: spec.user_id, _METADATA_INSTANCE: self._instance_id},
         )

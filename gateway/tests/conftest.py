@@ -1,6 +1,6 @@
 """Shared test doubles."""
 
-from dsh_gateway.backends.base import SandboxBackend, SandboxHandle, SandboxSpec
+from dsh_gateway.backends.base import ImageInfo, SandboxBackend, SandboxHandle, SandboxSpec
 
 
 class FakeBackend(SandboxBackend):
@@ -11,6 +11,9 @@ class FakeBackend(SandboxBackend):
         self.fail_capture = fail_capture
         self.orphans: list[SandboxHandle] = []
         self.steps: list[str] = []
+        base = {"dsh-cloud.contract": "1", "dsh-cloud.dsh-version": "0.2.1-rc.2", "dsh-cloud.runtime": "node:22-bookworm-slim"}
+        # Image reference -> labels; None is the default image.
+        self.images: dict[str | None, dict[str, str]] = {None: base}
 
     async def start(self, spec, progress=lambda step: None):
         for step in ("create", "restore", "boot"):
@@ -36,3 +39,8 @@ class FakeBackend(SandboxBackend):
 
     async def list_orphans(self):
         return self.orphans
+
+    async def inspect_image(self, ref):
+        if ref not in self.images:
+            raise ValueError(f"no such image {ref}")
+        return ImageInfo(ref=ref or "default", labels=self.images[ref])

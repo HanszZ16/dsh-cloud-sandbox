@@ -23,6 +23,7 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Getting started](#getting-started)
 - [Using it](#using-it)
 - [Admin console](#admin-console)
+- [Images: different software per group](#images-different-software-per-group)
 - [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
 - [Where user data lives](#where-user-data-lives)
 - [Sandbox lifecycle](#sandbox-lifecycle)
@@ -80,10 +81,14 @@ The gateway reverse-proxies dsh as required by dsh's guide [Publish the Web UI b
 ```
 dsh-cloud-sandbox/
 ├── README.md / README.zh.md
-├── sandbox-image/                 Sandbox image
-│   ├── Dockerfile                 node:22 + @deepseek-ai/dsh + pnpm + git/python3, user agent
-│   ├── entrypoint.sh              Install MCP packages → start dsh (with the admin overlay) → install default plugins in the background
-│   └── provision.py               Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
+├── sandbox-image/                 Workspace images
+│   ├── build.sh                   Builds the base image, then every team image in variants/ FROM it
+│   ├── base/                      Base image (also the default image)
+│   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + CJK fonts, user agent, compatibility labels
+│   │   ├── entrypoint.sh          Install MCP packages → start dsh (with the admin overlay) → install default plugins in the background
+│   │   └── provision.py           Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
+│   └── variants/
+│       └── data-science/Dockerfile Example team image: the base plus numpy, pandas, scipy, matplotlib, scikit-learn
 ├── web/                           Sign-in, loading page, account settings, admin console (React + Vite + TypeScript)
 │   ├── src/theme/                 Design tokens and fonts copied from dsh's ui-theme
 │   ├── src/pages/Login.tsx        Sign-in page
@@ -134,21 +139,24 @@ git clone https://github.com/HanszZ16/dsh-cloud-sandbox.git
 cd dsh-cloud-sandbox
 ```
 
-### 2. Build the sandbox image
+### 2. Build the workspace images
 
 ```sh
-docker build -t dsh-sandbox:dev sandbox-image
+sandbox-image/build.sh          # builds dsh-sandbox:dev (the default image) and dsh-sandbox-data-science:dev
 ```
 
-If npm downloads keep failing (common on some networks), build through a local proxy. The proxy arguments apply only to the build and are not stored in the image. Replace `7897` with your proxy's port:
+For the default image only: `docker build -t dsh-sandbox:dev sandbox-image/base`.
+
+On unreliable networks, point apt at a nearby Debian mirror and send npm through a local proxy (the arguments apply only to the build and are not stored in the image). Replace `7897` with your proxy's port:
 
 ```sh
-docker build -t dsh-sandbox:dev sandbox-image \
+BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   --build-arg http_proxy=http://host.docker.internal:7897 \
-  --build-arg https_proxy=http://host.docker.internal:7897
+  --build-arg https_proxy=http://host.docker.internal:7897" \
+  sandbox-image/build.sh
 ```
 
-To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.1-rc.2`).
+To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.1-rc.2`). The base image is about 2 GB (mostly Chromium and LibreOffice); a team image adds only what it installs.
 
 ### 3. Build the web UI
 
@@ -227,14 +235,38 @@ Only administrators can open `/admin`; every change is recorded in the audit log
 |---|---|
 | Overview | Users, active workspaces, today's requests and tokens, a 14-day request chart |
 | Users | Create, edit (display name, role, group, disable, reset password, per-user plugins), delete (optionally with the user's data); see each user's workspace status and today's usage. Disabling a user or resetting their password ends their sessions immediately |
-| Groups | Every user belongs to one group. A group sets: memory and CPU limits, idle sleep timeout, maximum lifetime, whether the shared key may be used, daily request limit, allowed models, default plugins |
-| Plugins & MCP | Maintains the plugin catalog (three kinds, see the next section), which groups and users are then assigned from |
+| Groups | Every user belongs to one group. A group sets: image, memory and CPU limits, idle sleep timeout, maximum lifetime, whether the shared key may be used, daily request limit, allowed models, default plugins |
+| Plugins & MCP | Maintains the plugin catalog (three kinds, see [provisioning](#provisioning-plugins-mcp-servers-and-config-patches)), which groups and users are then assigned from |
+| Images | Registers team images after checking they exist and match the default image; groups choose their image from here (see [Images](#images-different-software-per-group)) |
 | Active workspaces | Shows status (active / resuming / saving); restart one or put it to sleep |
 | Audit log | Sign-ins, sign-outs, and account and configuration changes |
 
 Changes to groups, plugins, and user assignments apply the **next time a workspace starts**. Editors say so; after saving, if affected users have active workspaces, a dialog lists them and offers **Restart now** (save, then start with the new configuration, usually within seconds; their running tasks are interrupted and open pages reconnect by themselves). The Active workspaces page can also restart a single user or put their workspace to sleep, and lists workspaces that are resuming or saving. The admin console is for operators, so it keeps technical details such as sandbox ids, uptime, and connection counts.
 
 Safeguards: at least one enabled administrator must remain; you cannot delete yourself; the default group cannot be deleted, and a group with users cannot be deleted.
+
+## Images: different software per group
+
+A workspace's **system software** comes from its image; **user data** (conversations, files, memory, plugins, venvs) comes from the user's own `/home/agent`. The two are combined at start, so changing a group's image only changes which software is installed, and users' data stays as it was.
+
+| Need | Where it goes |
+|---|---|
+| System software everyone needs (Chromium, LibreOffice, fonts) | The base image, `sandbox-image/base` |
+| System software or large libraries one team needs | A team image, `sandbox-image/variants/<name>`, chosen per group |
+| dsh plugins and MCP servers a team needs | Plugin assignments in the admin console |
+| Things one person needs | Installed by the user under their home: venvs, `npm -g`, `~/.local`; saved with their data |
+
+**Rules:**
+
+- Team images always build `FROM` the base image, install software as root, and end with `USER agent`; the user, paths, entrypoint, and port are defined by the base and must not change. See `variants/data-science/Dockerfile`.
+- The base image carries the labels `dsh-cloud.contract`, `dsh-cloud.dsh-version`, and `dsh-cloud.runtime` (the Node image, which fixes the Debian release and Python version), and team images inherit them. When an image is registered, the gateway checks that it exists (pulling it if needed) and that these labels match the default image's, and refuses it otherwise: users' homes move between images, and a different dsh or Python version would break their sessions, installed plugins, or venvs.
+- Use immutable tags (a date or version), never `latest`. An image's reference cannot change after registration: to upgrade, register the new tag and switch groups to it. Running workspaces keep their image until they restart, which allows gradual rollout and rollback.
+- Upgrading dsh or changing the Node / Debian version means upgrading the base image: rebuild everything with `build.sh`, update `SANDBOX_DOCKER_IMAGE`, and register each team image's new tag.
+- On start, the gateway pulls every registered image in the background so users do not wait for a download on first use.
+
+**Workflow:** build with `build.sh` (push to your registry in production) → admin console **Images → Register** → **Groups → Edit → Image** → save, and restart the affected workspaces when prompted. The Active workspaces page shows the image each workspace runs.
+
+The E2B backend treats the image reference as a template id and does not check labels; make sure templates are built from the same base image.
 
 ## Provisioning plugins, MCP servers, and config patches
 
@@ -266,7 +298,7 @@ Notes:
 | Memory (data of an MCP memory server, e.g. `~/.mcp-memory.jsonl`) | Under `/home/agent` | ✅ Same; point MCP data paths under `/home/agent` |
 | User files, projects, global npm packages (`NPM_CONFIG_PREFIX=~/.local`), dotfiles | `/home/agent` | ✅ Same |
 | Provisioning record | `/home/agent/.dsh-cloud/provisioned.json` | ✅ Same |
-| System directories (`/usr`, `/tmp`, apt software, the pnpm content store `/var/cache/pnpm-store`) | Image layers | ❌ Back to the image's state on every start |
+| System directories (`/usr`, `/tmp`, apt software, the pnpm content store `/var/cache/pnpm-store`) | The image the group chose | ❌ Back to the image's state on every start; put needed system software in an image (see [Images](#images-different-software-per-group)) |
 | Snapshot files | Gateway `gateway/state/<username>/home.tar` | ✅ Written atomically (`.partial`, then rename) |
 | Accounts, groups, plugin catalog, sessions, usage, audit | Gateway `gateway/data/gateway.db` (SQLite) | ✅ |
 | Users' own API keys | `gateway.db`, encrypted (Fernet) with a key derived from `GATEWAY_SECRET_KEY` | ✅ Never enters a sandbox |
@@ -276,7 +308,7 @@ Notes:
 
 | Event | Action |
 |---|---|
-| The user opens the loading page (after sign-in, or when `/u/<user>/` redirects there) | Create the container (with the group's memory and CPU) → write `home.tar` and the two files under `/etc/dsh-cloud` → install pending MCP packages → start dsh → wait for dsh to print its launch URL (about 3–6 s locally) → install pending default plugins in the background |
+| The user opens the loading page (after sign-in, or when `/u/<user>/` redirects there) | Create the container from the group's image (with the group's memory and CPU) → write `home.tar` and the two files under `/etc/dsh-cloud` → install pending MCP packages → start dsh → wait for dsh to print its launch URL (about 3–6 s locally) → install pending default plugins in the background |
 | The user signs out | Stop the container (SIGTERM, so dsh flushes its stores) → archive `/home/agent` → write the snapshot → remove the container → revoke the sandbox's model token |
 | No WebSocket connection and idle longer than the group's idle timeout | Same |
 | Running longer than the group's maximum lifetime | Same, whether active or not |
@@ -390,7 +422,7 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 `gateway/dsh_gateway/backends/e2b_backend.py` follows the E2B Python SDK documentation but **has not run against a real key**. To enable it:
 
 1. Install the extra: `cd gateway && uv sync --extra e2b`, and set `E2B_API_KEY`;
-2. Build an E2B template from `sandbox-image/Dockerfile` and put its id in `SANDBOX_E2B_TEMPLATE`;
+2. Build an E2B template from `sandbox-image/base/Dockerfile` (or a team image) and put its id in `SANDBOX_E2B_TEMPLATE`;
 3. Set `SANDBOX_BACKEND=e2b`;
 4. `GATEWAY_SANDBOX_CALLBACK_URL` must be a public address E2B can reach, because sandboxes call back into the model proxy.
 

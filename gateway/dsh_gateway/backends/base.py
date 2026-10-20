@@ -49,6 +49,15 @@ class SandboxSpec:
     # starts: the admin policy and overlay under /etc/dsh-cloud.
     files: dict[str, bytes] = field(default_factory=dict)
     resources: SandboxResources = field(default_factory=SandboxResources)
+    # Image (Docker reference, or E2B template) chosen by the user's group;
+    # None selects the backend's configured default.
+    image: str | None = None
+
+
+@dataclass(frozen=True)
+class ImageInfo:
+    ref: str
+    labels: dict[str, str]
 
 
 @dataclass
@@ -80,6 +89,14 @@ class SandboxBackend(ABC):
     @abstractmethod
     async def destroy(self, handle: SandboxHandle) -> None:
         """Release every resource of the machine. Must succeed on an already-gone machine."""
+
+    async def inspect_image(self, ref: str | None) -> ImageInfo | None:
+        """Labels of image `ref` (None: the default image), fetching it when needed.
+
+        Raises ValueError when the image cannot be found. Returns None when the
+        backend cannot inspect images, e.g. hosted templates.
+        """
+        return None
 
     async def keepalive(self, handle: SandboxHandle) -> None:
         """Extend a backend-side lifetime limit; called while the user is active."""

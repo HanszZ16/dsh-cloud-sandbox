@@ -15,6 +15,7 @@ export interface SandboxInfo {
   connections?: number
   idle_timeout_s?: number
   max_lifetime_s?: number
+  image?: string
 }
 
 export interface UserInfo {
@@ -67,6 +68,20 @@ export interface Group {
   allowed_models: string[]
   plugin_ids: number[]
   user_count: number
+  /** Null runs the default image. */
+  image_id: number | null
+}
+
+export interface WorkspaceImage {
+  id: number
+  name: string
+  ref: string
+  description: string
+  dsh_version: string
+  runtime: string
+  checked_at: number | null
+  created_at: number
+  group_count: number
 }
 
 export interface McpConfig {
@@ -100,6 +115,7 @@ export interface Overview {
   tokens_today: number
   shared_key_configured: boolean
   backend: string
+  default_image: string
   instance_id: string
   usage_by_day: (Usage & { day: string; users: number })[]
 }
@@ -171,6 +187,12 @@ export const api = {
   groups: () => request<Group[]>('GET', '/api/admin/groups'),
   createGroup: (body: Partial<Group>) => request<Group>('POST', '/api/admin/groups', body),
   updateGroup: (id: number, body: Partial<Group>) => request<Group>('PATCH', `/api/admin/groups/${id}`, body),
+  images: () => request<WorkspaceImage[]>('GET', '/api/admin/images'),
+  createImage: (body: { name: string; ref: string; description: string }) => request<WorkspaceImage>('POST', '/api/admin/images', body),
+  updateImage: (id: number, body: { name?: string; description?: string }) =>
+    request<WorkspaceImage>('PATCH', `/api/admin/images/${id}`, body),
+  checkImage: (id: number) => request<WorkspaceImage>('POST', `/api/admin/images/${id}/check`),
+  deleteImage: (id: number) => request<{ ok: true }>('DELETE', `/api/admin/images/${id}`),
   deleteGroup: (id: number) => request<{ ok: true }>('DELETE', `/api/admin/groups/${id}`),
   plugins: () => request<Plugin[]>('GET', '/api/admin/plugins'),
   createPlugin: (body: Omit<Plugin, 'id'>) => request<Plugin>('POST', '/api/admin/plugins', body),

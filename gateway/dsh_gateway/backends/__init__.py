@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from ..config import Settings
 from .base import (
-    STATE_PARTS, Progress, SandboxBackend, SandboxHandle, SandboxResources, SandboxSpec, files_archive, no_progress,
+    STATE_PARTS, ImageInfo, Progress, SandboxBackend, SandboxHandle, SandboxResources, SandboxSpec, files_archive,
+    no_progress,
 )
 
 
@@ -24,5 +25,5 @@ def create_backend(settings: Settings) -> SandboxBackend:
 
 __all__ = [
     "SandboxBackend", "SandboxHandle", "SandboxResources", "SandboxSpec", "STATE_PARTS", "create_backend",
-    "files_archive", "Progress", "no_progress",
+    "files_archive", "ImageInfo", "Progress", "no_progress",
 ]

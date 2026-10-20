@@ -41,9 +41,13 @@ class SandboxPolicy:
     idle_timeout_s: int
     max_lifetime_s: int
     files: dict[str, bytes]
+    # The group's image reference; None runs the backend's default image.
+    image: str | None = None
 
 
-def build_policy(user: User, group: dict[str, Any], plugins: list[dict[str, Any]]) -> SandboxPolicy:
+def build_policy(
+    user: User, group: dict[str, Any], plugins: list[dict[str, Any]], image: str | None = None
+) -> SandboxPolicy:
     bundles = [
         {"key": p["key"], "spec": p["config"]["spec"]} for p in plugins if p["kind"] == "bundle"
     ]
@@ -55,6 +59,7 @@ def build_policy(user: User, group: dict[str, Any], plugins: list[dict[str, Any]
         resources=SandboxResources(mem_limit=group["mem_limit"], cpus=float(group["cpus"])),
         idle_timeout_s=int(group["idle_timeout_s"]),
         max_lifetime_s=int(group["max_lifetime_s"]),
+        image=image,
         files={
             POLICY_PATH: (json.dumps({"user": user.username, "bundles": bundles, "npm": npm}, indent=2) + "\n").encode(),
             OVERLAY_PATH: render_overlay(plugins).encode(),

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 
-import { api, type Group, type Plugin } from '../../api.ts'
+import { api, type Group, type Plugin, type WorkspaceImage } from '../../api.ts'
 import { errorMessage, Field, formatDuration, Modal } from '../../ui.tsx'
 import { Loading, useLoad } from '../Admin.tsx'
 import { PluginPicker } from './Plugins.tsx'
@@ -8,8 +8,8 @@ import { RestartHint, RestartPrompt, runningAffected } from './RestartPrompt.tsx
 
 export function GroupsSection({ showToast }: { showToast: (m: string) => void }) {
   const load = useCallback(async () => {
-    const [groups, plugins, users] = await Promise.all([api.groups(), api.plugins(), api.users()])
-    return { groups, plugins, users }
+    const [groups, plugins, users, images] = await Promise.all([api.groups(), api.plugins(), api.users(), api.images()])
+    return { groups, plugins, users, images }
   }, [])
   const { data, error, reload } = useLoad(load)
   const [editing, setEditing] = useState<Group | 'new' | null>(null)
@@ -17,6 +17,7 @@ export function GroupsSection({ showToast }: { showToast: (m: string) => void })
 
   if (!data) return <Loading error={error} />
   const pluginName = new Map(data.plugins.map((p) => [p.id, p.name]))
+  const imageName = new Map(data.images.map((i) => [i.id, i.name]))
 
   async function remove(group: Group) {
     try {
@@ -61,6 +62,7 @@ export function GroupsSection({ showToast }: { showToast: (m: string) => void })
               </div>
             </div>
             <div className="hero-meta" style={{ marginTop: 10 }}>
+              <span>镜像 {g.image_id ? imageName.get(g.image_id) : '默认'}</span>
               <span>内存 {g.mem_limit}</span>
               <span>CPU {g.cpus} 核</span>
               <span>空闲 {formatDuration(g.idle_timeout_s)} 后休眠</span>
@@ -87,6 +89,7 @@ export function GroupsSection({ showToast }: { showToast: (m: string) => void })
         <GroupEditor
           group={editing === 'new' ? null : editing}
           plugins={data.plugins}
+          images={data.images}
           onClose={() => setEditing(null)}
           onSaved={(message) => {
             const affected = editing === 'new' ? [] : runningAffected(data.users, data.groups, { groupId: editing.id })
@@ -105,11 +108,13 @@ export function GroupsSection({ showToast }: { showToast: (m: string) => void })
 function GroupEditor({
   group,
   plugins,
+  images,
   onClose,
   onSaved,
 }: {
   group: Group | null
   plugins: Plugin[]
+  images: WorkspaceImage[]
   onClose: () => void
   onSaved: (message: string) => void
 }) {
@@ -123,6 +128,7 @@ function GroupEditor({
   const [dailyLimit, setDailyLimit] = useState(String(group?.daily_request_limit ?? 0))
   const [models, setModels] = useState((group?.allowed_models ?? []).join(', '))
   const [pluginIds, setPluginIds] = useState<number[]>(group?.plugin_ids ?? [])
+  const [imageId, setImageId] = useState(group?.image_id ?? 0)
   const [error, setError] = useState<string | null>(null)
 
   async function save() {
@@ -138,6 +144,7 @@ function GroupEditor({
       daily_request_limit: Number(dailyLimit) || 0,
       allowed_models: models.split(/[,，\s]+/).filter(Boolean),
       plugin_ids: pluginIds,
+      image_id: imageId,
     }
     try {
       if (group) await api.updateGroup(group.id, body)
@@ -170,6 +177,16 @@ function GroupEditor({
         </Field>
         <Field label="说明">
           <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Field>
+        <Field label="镜像" wide hint="决定工作空间里有哪些系统软件；用户的对话、文件、记忆和插件不受影响。在「镜像」页登记新镜像。">
+          <select className="input" value={imageId} onChange={(e) => setImageId(Number(e.target.value))}>
+            <option value={0}>默认镜像</option>
+            {images.map((image) => (
+              <option key={image.id} value={image.id}>
+                {image.name}（{image.ref}）
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="内存上限" hint="Docker 格式，如 2g、4g、512m">
           <input className="input" value={memLimit} onChange={(e) => setMemLimit(e.target.value)} />

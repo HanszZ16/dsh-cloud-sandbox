@@ -5,6 +5,7 @@ import { api, type AuditEntry, type Overview, type SandboxInfo } from '../api.ts
 import { TopBar } from '../TopBar.tsx'
 import { errorMessage, formatDuration, formatNumber, formatTime, Spinner, StatusBadge, useToast } from '../ui.tsx'
 import { GroupsSection } from './admin/Groups.tsx'
+import { ImagesSection } from './admin/Images.tsx'
 import { PluginsSection } from './admin/Plugins.tsx'
 import { UsersSection } from './admin/Users.tsx'
 
@@ -13,6 +14,7 @@ const NAV = [
   { to: 'users', label: '用户' },
   { to: 'groups', label: '用户组' },
   { to: 'plugins', label: '插件与 MCP' },
+  { to: 'images', label: '镜像' },
   { to: 'sandboxes', label: '活跃工作空间' },
   { to: 'audit', label: '审计日志' },
 ]
@@ -38,6 +40,7 @@ export function AdminPage() {
             <Route path="users" element={<UsersSection showToast={showToast} />} />
             <Route path="groups" element={<GroupsSection showToast={showToast} />} />
             <Route path="plugins" element={<PluginsSection showToast={showToast} />} />
+            <Route path="images" element={<ImagesSection showToast={showToast} />} />
             <Route path="sandboxes" element={<SandboxesSection showToast={showToast} />} />
             <Route path="audit" element={<AuditSection />} />
             <Route path="*" element={<Navigate to="overview" replace />} />
@@ -162,6 +165,7 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
                   <th>用户</th>
                   <th>状态</th>
                   <th>沙箱</th>
+                  <th>镜像</th>
                   <th>已运行</th>
                   <th>空闲</th>
                   <th>连接</th>
@@ -176,6 +180,7 @@ function SandboxesSection({ showToast }: { showToast: (m: string) => void }) {
                       <StatusBadge status={s.status} />
                     </td>
                     <td className="mono">{s.sandbox_id}</td>
+                    <td className="mono">{s.image}</td>
                     <td>{formatDuration(s.uptime_s)}</td>
                     <td>{formatDuration(s.idle_s)}</td>
                     <td>{s.connections}</td>
@@ -209,6 +214,9 @@ const ACTION_LABEL: Record<string, string> = {
   'clear-api-key': '删除 API Key',
   'release-sandbox': '工作空间休眠',
   'restart-sandbox': '重启工作空间',
+  'create-image': '登记镜像',
+  'update-image': '修改镜像',
+  'delete-image': '删除镜像',
   'create-user': '创建用户',
   'update-user': '修改用户',
   'delete-user': '删除用户',

@@ -27,6 +27,8 @@ class SandboxRecord:
     model_token: str
     idle_timeout_s: int
     max_lifetime_s: int
+    # The image this sandbox runs; None is the backend default.
+    image: str | None = None
     started_at: float = field(default_factory=time.monotonic)
     last_seen: float = field(default_factory=time.monotonic)
     active_websockets: int = 0
@@ -189,8 +191,12 @@ class SandboxManager:
             restore=await self._store.load(user_id),
             files=policy.files,
             resources=policy.resources,
+            image=policy.image,
         )
-        log.info("starting sandbox for %s (restoring %s)", user_id, sorted(spec.restore) or "nothing")
+        log.info(
+            "starting sandbox for %s on %s (restoring %s)",
+            user_id, spec.image or "the default image", sorted(spec.restore) or "nothing",
+        )
         self._start_errors.pop(user_id, None)
         try:
             handle = await self._backend.start(spec, lambda step: self._phase(user_id, step))
@@ -199,7 +205,7 @@ class SandboxManager:
             raise
         record = SandboxRecord(
             handle=handle, model_token=model_token,
-            idle_timeout_s=policy.idle_timeout_s, max_lifetime_s=policy.max_lifetime_s,
+            idle_timeout_s=policy.idle_timeout_s, max_lifetime_s=policy.max_lifetime_s, image=policy.image,
         )
         self._records[user_id] = record
         self._token_users[model_token] = user_id

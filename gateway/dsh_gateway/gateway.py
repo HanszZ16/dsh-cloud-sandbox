@@ -55,7 +55,8 @@ class Gateway:
     def policy_for(self, user: User) -> SandboxPolicy:
         group = self.db.get_group(user.group_id)
         assert group is not None, "users.group_id references groups"
-        return build_policy(user, group, self.db.effective_plugins(user))
+        image = self.db.get_image(group["image_id"]) if group.get("image_id") else None
+        return build_policy(user, group, self.db.effective_plugins(user), image["ref"] if image else None)
 
     def user_api_key(self, user: User) -> str | None:
         stored = self.db.api_key_enc(user.id)
@@ -76,5 +77,6 @@ class Gateway:
                 connections=record.active_websockets,
                 idle_timeout_s=record.idle_timeout_s,
                 max_lifetime_s=record.max_lifetime_s,
+                image=record.image or self.settings.docker_image,
             )
         return info

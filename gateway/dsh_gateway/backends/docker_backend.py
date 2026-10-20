@@ -14,10 +14,10 @@ import secrets
 import time
 
 import docker
-from docker.errors import NotFound
+from docker.errors import APIError, ImageNotFound, NotFound
 from docker.models.containers import Container
 
-from .base import Progress, SandboxBackend, SandboxHandle, SandboxSpec, files_archive, no_progress
+from .base import ImageInfo, Progress, SandboxBackend, SandboxHandle, SandboxSpec, files_archive, no_progress
 
 _LABEL = "dsh-cloud"
 _LABEL_USER = "dsh-cloud.user"
@@ -65,7 +65,7 @@ class DockerBackend(SandboxBackend):
         env["DSH_PUBLIC_URL"] = spec.public_url
         env["DSH_TRUSTED_HOST"] = spec.trusted_host
         return self._client.containers.create(
-            self._image,
+            spec.image or self._image,
             name=f"dsh-sbx-{spec.user_id}-{secrets.token_hex(3)}",
             labels={_LABEL: "1", _LABEL_USER: spec.user_id, _LABEL_INSTANCE: self._instance_id},
             environment=env,
@@ -110,6 +110,18 @@ class DockerBackend(SandboxBackend):
             stream, _stat = await asyncio.to_thread(container.get_archive, path)
             archives[part] = await asyncio.to_thread(lambda s=stream: b"".join(s))
         return archives
+
+    async def inspect_image(self, ref: str | None) -> ImageInfo:
+        ref = ref or self._image
+        try:
+            image = await asyncio.to_thread(self._client.images.get, ref)
+        except ImageNotFound:
+            try:
+                # Registry images are pulled once here, so the first user does not wait for it.
+                image = await asyncio.to_thread(self._client.images.pull, ref)
+            except (ImageNotFound, APIError) as err:
+                raise ValueError(f"镜像 {ref} 在本机不存在，也无法拉取：{err.explanation or err}") from err
+        return ImageInfo(ref=ref, labels=dict(image.labels or {}))
 
     async def destroy(self, handle: SandboxHandle) -> None:
         try:

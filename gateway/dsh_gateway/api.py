@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import sqlite3
+import time
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -21,6 +22,7 @@ from .auth import (
 )
 from .db import User
 from .gateway import Gateway
+from .images import DSH_VERSION, RUNTIME, compatibility_problem
 from .policy import validate_plugin
 from .proxy import GATEWAY_COOKIE
 
@@ -212,6 +214,7 @@ async def overview(request: Request, _: User = Depends(admin)) -> dict[str, Any]
         "tokens_today": sum(u["input_tokens"] + u["output_tokens"] for u in usage.values()),
         "shared_key_configured": bool(g.settings.deepseek_api_key),
         "backend": g.settings.backend,
+        "default_image": g.settings.docker_image if g.settings.backend == "docker" else g.settings.e2b_template,
         "instance_id": g.settings.instance_id,
         "usage_by_day": g.db.usage_by_day(14),
     }
@@ -337,6 +340,13 @@ class GroupBody(BaseModel):
     daily_request_limit: int | None = Field(default=None, ge=0)
     allowed_models: list[str] | None = None
     plugin_ids: list[int] | None = None
+    # 0 selects the default image.
+    image_id: int | None = Field(default=None, ge=0)
+
+
+def _check_image_id(g: Gateway, image_id: int | None) -> None:
+    if image_id and g.db.get_image(image_id) is None:
+        raise HTTPException(400, "镜像不存在")
 
 
 @router.get("/admin/groups")
@@ -349,6 +359,7 @@ async def create_group(body: GroupBody, request: Request, actor: User = Depends(
     g = gw(request)
     if not body.name:
         raise HTTPException(400, "请填写组名")
+    _check_image_id(g, body.image_id)
     s = g.settings
     values = {
         "mem_limit": s.mem_limit, "cpus": s.cpus, "idle_timeout_s": s.idle_timeout_s,
@@ -370,6 +381,7 @@ async def update_group(group_id: int, body: GroupBody, request: Request, actor: 
     group = g.db.get_group(group_id)
     if group is None:
         raise HTTPException(404, "用户组不存在")
+    _check_image_id(g, body.image_id)
     try:
         g.db.update_group(group_id, body.model_dump(exclude_none=True, exclude={"plugin_ids"}))
     except sqlite3.IntegrityError:
@@ -454,6 +466,99 @@ async def delete_plugin(plugin_id: int, request: Request, actor: User = Depends(
         raise HTTPException(404, "插件不存在")
     g.db.delete_plugin(plugin_id)
     g.db.audit(actor.username, "delete-plugin", plugin["key"])
+    return {"ok": True}
+
+
+# Admin: images
+
+class ImageBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    ref: str | None = Field(default=None, min_length=1, max_length=300, pattern=r"^\S+$")
+    description: str | None = None
+
+
+async def _inspect_compatible(g: Gateway, ref: str) -> dict[str, str]:
+    """The image's labels after the compatibility check; HTTP 400 explaining any problem."""
+    backend = g.manager.backend
+    try:
+        candidate = await backend.inspect_image(ref)
+        default = await backend.inspect_image(None)
+    except ValueError as err:
+        raise HTTPException(400, str(err)) from None
+    if candidate is None or default is None:
+        # The backend cannot inspect images (hosted templates): accept as declared.
+        return {}
+    problem = compatibility_problem(candidate, default)
+    if problem:
+        raise HTTPException(400, problem)
+    return candidate.labels
+
+
+@router.get("/admin/images")
+async def list_images(request: Request, _: User = Depends(admin)) -> list[dict[str, Any]]:
+    return gw(request).db.list_images()
+
+
+@router.post("/admin/images", status_code=201)
+async def create_image(body: ImageBody, request: Request, actor: User = Depends(admin)) -> dict[str, Any]:
+    """Register an image after checking it exists (pulling it if needed) and matches the default image."""
+    g = gw(request)
+    if not body.name or not body.ref:
+        raise HTTPException(400, "请填写名称和镜像地址")
+    labels = await _inspect_compatible(g, body.ref)
+    try:
+        image_id = g.db.create_image(
+            body.name, body.ref, body.description or "", labels.get(DSH_VERSION, ""), labels.get(RUNTIME, "")
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "名称或镜像地址已登记") from None
+    g.db.audit(actor.username, "create-image", body.ref)
+    return g.db.get_image(image_id) or {}
+
+
+@router.patch("/admin/images/{image_id}")
+async def update_image(image_id: int, body: ImageBody, request: Request, actor: User = Depends(admin)) -> dict[str, Any]:
+    """Rename or describe an image. The reference is fixed: register a new tag instead and switch groups to it."""
+    g = gw(request)
+    image = g.db.get_image(image_id)
+    if image is None:
+        raise HTTPException(404, "镜像不存在")
+    if body.ref is not None and body.ref != image["ref"]:
+        raise HTTPException(400, "镜像地址登记后不能修改；请登记新版本，再把用户组切过去")
+    try:
+        g.db.update_image(image_id, body.model_dump(exclude_none=True, exclude={"ref"}))
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "名称已存在") from None
+    g.db.audit(actor.username, "update-image", image["ref"])
+    return g.db.get_image(image_id) or {}
+
+
+@router.post("/admin/images/{image_id}/check")
+async def check_image(image_id: int, request: Request, actor: User = Depends(admin)) -> dict[str, Any]:
+    """Re-check that the image is present (pulling it if needed) and still compatible."""
+    g = gw(request)
+    image = g.db.get_image(image_id)
+    if image is None:
+        raise HTTPException(404, "镜像不存在")
+    labels = await _inspect_compatible(g, image["ref"])
+    g.db.update_image(image_id, {
+        "dsh_version": labels.get(DSH_VERSION, image["dsh_version"]),
+        "runtime": labels.get(RUNTIME, image["runtime"]),
+        "checked_at": time.time(),
+    })
+    return g.db.get_image(image_id) or {}
+
+
+@router.delete("/admin/images/{image_id}")
+async def delete_image(image_id: int, request: Request, actor: User = Depends(admin)) -> dict[str, Any]:
+    g = gw(request)
+    image = g.db.get_image(image_id)
+    if image is None:
+        raise HTTPException(404, "镜像不存在")
+    if image["group_count"]:
+        raise HTTPException(400, "还有用户组在使用这个镜像，请先把它们切到其他镜像")
+    g.db.delete_image(image_id)
+    g.db.audit(actor.username, "delete-image", image["ref"])
     return {"ok": True}
 
 

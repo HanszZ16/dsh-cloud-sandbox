@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS groups (
@@ -84,9 +84,26 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 """
 
+# Upgrades from the previous version, applied in order to existing databases.
+_MIGRATIONS = {
+    2: """
+CREATE TABLE images (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  ref TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  dsh_version TEXT NOT NULL DEFAULT '',
+  runtime TEXT NOT NULL DEFAULT '',
+  checked_at REAL,
+  created_at REAL NOT NULL
+);
+ALTER TABLE groups ADD COLUMN image_id INTEGER REFERENCES images(id);
+""",
+}
+
 GROUP_FIELDS = (
     "name", "description", "mem_limit", "cpus", "idle_timeout_s", "max_lifetime_s",
-    "allow_shared_key", "daily_request_limit", "allowed_models",
+    "allow_shared_key", "daily_request_limit", "allowed_models", "image_id",
 )
 USER_FIELDS = ("display_name", "role", "group_id", "disabled")
 PLUGIN_FIELDS = ("key", "kind", "name", "description", "config")
@@ -125,8 +142,12 @@ class Database:
             version = self._conn.execute("PRAGMA user_version").fetchone()[0]
             if version > SCHEMA_VERSION:
                 raise RuntimeError(f"{path} has schema {version}; this gateway supports up to {SCHEMA_VERSION}")
-            self._conn.executescript(_SCHEMA)
-            self._conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            if version == 0:
+                # A new database starts from the version-1 tables, then migrates like any other.
+                self._conn.executescript(_SCHEMA)
+                version = 1
+            for target in range(version + 1, SCHEMA_VERSION + 1):
+                self._conn.executescript(f"BEGIN; {_MIGRATIONS[target]} PRAGMA user_version={target}; COMMIT;")
 
     def close(self) -> None:
         self._conn.close()
@@ -210,6 +231,39 @@ class Database:
             [("DELETE FROM group_plugins WHERE group_id = ?", (group_id,))]
             + [("INSERT INTO group_plugins VALUES (?, ?)", (group_id, pid)) for pid in sorted(set(plugin_ids))]
         )
+
+    # Images
+
+    def list_images(self) -> list[dict[str, Any]]:
+        rows = self._all(
+            "SELECT i.*, (SELECT COUNT(*) FROM groups g WHERE g.image_id = i.id) AS group_count "
+            "FROM images i ORDER BY i.id"
+        )
+        return [dict(r) for r in rows]
+
+    def get_image(self, image_id: int) -> dict[str, Any] | None:
+        row = self._one(
+            "SELECT i.*, (SELECT COUNT(*) FROM groups g WHERE g.image_id = i.id) AS group_count "
+            "FROM images i WHERE i.id = ?", (image_id,)
+        )
+        return None if row is None else dict(row)
+
+    def create_image(self, name: str, ref: str, description: str, dsh_version: str, runtime: str) -> int:
+        now = time.time()
+        return self._run(
+            "INSERT INTO images (name, ref, description, dsh_version, runtime, checked_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, ref, description, dsh_version, runtime, now, now),
+        )
+
+    def update_image(self, image_id: int, values: dict[str, Any]) -> None:
+        stored = {k: v for k, v in values.items() if k in ("name", "description", "dsh_version", "runtime", "checked_at")}
+        if stored:
+            assignments = ", ".join(f"{k} = ?" for k in stored)
+            self._run(f"UPDATE images SET {assignments} WHERE id = ?", (*stored.values(), image_id))
+
+    def delete_image(self, image_id: int) -> None:
+        self._run("DELETE FROM images WHERE id = ?", (image_id,))
 
     # Users
 
@@ -400,6 +454,9 @@ def _group_columns(values: dict[str, Any]) -> dict[str, Any]:
                 value = json.dumps(list(value))
             elif key == "allow_shared_key":
                 value = int(bool(value))
+            elif key == "image_id":
+                # 0 selects the default image.
+                value = value or None
             stored[key] = value
     return stored
 
