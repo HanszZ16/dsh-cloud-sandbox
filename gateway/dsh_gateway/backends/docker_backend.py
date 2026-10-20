@@ -17,10 +17,11 @@ import docker
 from docker.errors import NotFound
 from docker.models.containers import Container
 
-from .base import SandboxBackend, SandboxHandle, SandboxSpec
+from .base import SandboxBackend, SandboxHandle, SandboxSpec, files_archive
 
 _LABEL = "dsh-cloud"
 _LABEL_USER = "dsh-cloud.user"
+_LABEL_INSTANCE = "dsh-cloud.instance"
 _LAUNCH_LINE = re.compile(r"dsh web: (https?://\S+\?token=\S+)")
 # Per archive name: (captured directory, parent it is extracted into).
 _PARTS = {"home": ("/home/agent", "/home")}
@@ -29,12 +30,11 @@ _PARTS = {"home": ("/home/agent", "/home")}
 class DockerBackend(SandboxBackend):
     name = "docker"
 
-    def __init__(self, image: str, start_timeout_s: int, mem_limit: str = "2g", cpus: float = 2.0) -> None:
+    def __init__(self, image: str, start_timeout_s: int, instance_id: str) -> None:
         self._client = docker.from_env()
         self._image = image
         self._start_timeout_s = start_timeout_s
-        self._mem_limit = mem_limit
-        self._cpus = cpus
+        self._instance_id = instance_id
 
     async def start(self, spec: SandboxSpec) -> SandboxHandle:
         container = await asyncio.to_thread(self._create, spec)
@@ -42,6 +42,8 @@ class DockerBackend(SandboxBackend):
             for part, data in spec.restore.items():
                 _, parent = _PARTS[part]
                 await asyncio.to_thread(container.put_archive, parent, data)
+            if spec.files:
+                await asyncio.to_thread(container.put_archive, "/", files_archive(spec.files))
             await asyncio.to_thread(container.start)
             await self._wait_listening(container)
             await asyncio.to_thread(container.reload)
@@ -62,13 +64,15 @@ class DockerBackend(SandboxBackend):
         return self._client.containers.create(
             self._image,
             name=f"dsh-sbx-{spec.user_id}-{secrets.token_hex(3)}",
-            labels={_LABEL: "1", _LABEL_USER: spec.user_id},
+            labels={_LABEL: "1", _LABEL_USER: spec.user_id, _LABEL_INSTANCE: self._instance_id},
             environment=env,
             ports={"3080/tcp": ("127.0.0.1", None)},
             extra_hosts={"host.docker.internal": "host-gateway"},
-            mem_limit=self._mem_limit,
-            nano_cpus=int(self._cpus * 1e9),
+            mem_limit=spec.resources.mem_limit,
+            nano_cpus=int(spec.resources.cpus * 1e9),
             pids_limit=1024,
+            # Reaps the entrypoint's background plugin provisioner.
+            init=True,
         )
 
     async def _wait_listening(self, container: Container) -> None:
@@ -111,7 +115,8 @@ class DockerBackend(SandboxBackend):
 
     async def list_orphans(self) -> list[SandboxHandle]:
         containers = await asyncio.to_thread(
-            self._client.containers.list, all=True, filters={"label": _LABEL}
+            self._client.containers.list, all=True,
+            filters={"label": [_LABEL, f"{_LABEL_INSTANCE}={self._instance_id}"]},
         )
         return [
             SandboxHandle(sandbox_id=c.id, user_id=c.labels.get(_LABEL_USER, "unknown"), upstream_url="")

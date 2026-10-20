@@ -16,19 +16,20 @@ import asyncio
 import re
 import time
 
-from .base import SandboxBackend, SandboxHandle, SandboxSpec
+from .base import SandboxBackend, SandboxHandle, SandboxSpec, files_archive
 
 _LAUNCH_LINE = re.compile(r"dsh web: (https?://\S+\?token=\S+)")
 _LOG = "/tmp/dsh-web.log"
 _PORT = 3080
 _PART_DIRS = {"home": ("/home", "agent")}
 _METADATA_KEY = "dsh-cloud-user"
+_METADATA_INSTANCE = "dsh-cloud-instance"
 
 
 class E2BBackend(SandboxBackend):
     name = "e2b"
 
-    def __init__(self, template: str, start_timeout_s: int, idle_timeout_s: int) -> None:
+    def __init__(self, template: str, start_timeout_s: int, idle_timeout_s: int, instance_id: str) -> None:
         try:
             from e2b import AsyncSandbox
         except ImportError as err:
@@ -38,6 +39,7 @@ class E2BBackend(SandboxBackend):
         self._sandbox_cls = AsyncSandbox
         self._template = template
         self._start_timeout_s = start_timeout_s
+        self._instance_id = instance_id
         # E2B kills a sandbox at its own timeout; keepalive() pushes it forward, and
         # this margin outlives the gateway's idle reaper so the gateway decides first.
         self._e2b_timeout_s = idle_timeout_s + 300
@@ -47,13 +49,17 @@ class E2BBackend(SandboxBackend):
         sbx = await self._sandbox_cls.create(
             template=self._template,
             timeout=self._e2b_timeout_s,
-            metadata={_METADATA_KEY: spec.user_id},
+            metadata={_METADATA_KEY: spec.user_id, _METADATA_INSTANCE: self._instance_id},
         )
         try:
             for part, data in spec.restore.items():
                 archive = f"/tmp/restore-{part}.tar"
                 await sbx.files.write(archive, data)
                 await sbx.commands.run(f"tar -xpf {archive} -C {_PART_DIRS[part][0]} && rm {archive}", user="root")
+            if spec.files:
+                # Resource limits come from the template on E2B; spec.resources is not applied.
+                await sbx.files.write("/tmp/dsh-cloud-files.tar", files_archive(spec.files))
+                await sbx.commands.run("tar -xpf /tmp/dsh-cloud-files.tar -C / && rm /tmp/dsh-cloud-files.tar", user="root")
             host = sbx.get_host(_PORT)
             env = dict(spec.env)
             env["DSH_PUBLIC_URL"] = spec.public_url
@@ -126,7 +132,12 @@ class E2BBackend(SandboxBackend):
         paginator = self._sandbox_cls.list()
         found: list[SandboxHandle] = []
         for info in await paginator.next_items():
-            user = (info.metadata or {}).get(_METADATA_KEY)
-            if user is not None and info.sandbox_id not in self._sandboxes:
+            metadata = info.metadata or {}
+            user = metadata.get(_METADATA_KEY)
+            if (
+                user is not None
+                and metadata.get(_METADATA_INSTANCE) == self._instance_id
+                and info.sandbox_id not in self._sandboxes
+            ):
                 found.append(SandboxHandle(sandbox_id=info.sandbox_id, user_id=user, upstream_url=""))
         return found

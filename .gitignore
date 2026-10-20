@@ -4,3 +4,6 @@ __pycache__/
 state/
 .env
 .pytest_cache/
+data/
+node_modules/
+web/dist/

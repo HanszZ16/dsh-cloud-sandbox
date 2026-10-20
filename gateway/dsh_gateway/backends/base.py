@@ -17,6 +17,13 @@ from dataclasses import dataclass, field
 STATE_PARTS: tuple[str, ...] = ("home",)
 
 
+@dataclass(frozen=True)
+class SandboxResources:
+    # Docker memory string, e.g. "2g".
+    mem_limit: str = "2g"
+    cpus: float = 2.0
+
+
 @dataclass
 class SandboxSpec:
     user_id: str
@@ -28,6 +35,10 @@ class SandboxSpec:
     env: dict[str, str]
     # Previously captured archives keyed by STATE_PARTS name.
     restore: dict[str, bytes] = field(default_factory=dict)
+    # Absolute path -> content, written root-owned and read-only before dsh
+    # starts: the admin policy and overlay under /etc/dsh-cloud.
+    files: dict[str, bytes] = field(default_factory=dict)
+    resources: SandboxResources = field(default_factory=SandboxResources)
 
 
 @dataclass
@@ -65,4 +76,31 @@ class SandboxBackend(ABC):
 
     @abstractmethod
     async def list_orphans(self) -> list[SandboxHandle]:
-        """Machines this backend created that the gateway no longer tracks (after a restart)."""
+        """Machines this gateway instance created that it no longer tracks (after a restart).
+
+        Only machines labelled with this gateway's instance id qualify, so two
+        gateways sharing one Docker host or E2B team never reap each other's users.
+        """
+
+
+def files_archive(files: dict[str, bytes]) -> bytes:
+    """A tar rooted at / holding `files` as root-owned, world-readable, read-only entries."""
+    import io
+    import tarfile
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        made: set[str] = set()
+        for path, data in sorted(files.items()):
+            parts = path.strip("/").split("/")
+            for depth in range(1, len(parts)):
+                directory = "/".join(parts[:depth])
+                if directory not in made:
+                    made.add(directory)
+                    info = tarfile.TarInfo(directory)
+                    info.type, info.mode = tarfile.DIRTYPE, 0o755
+                    tar.addfile(info)
+            info = tarfile.TarInfo("/".join(parts))
+            info.size, info.mode = len(data), 0o644
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()

@@ -110,10 +110,19 @@ async def forward_http(
         raw_headers.append((lower.encode(), value.encode()))
 
     response = StreamingResponse(
-        upstream.aiter_raw(), status_code=upstream.status_code, background=BackgroundTask(upstream.aclose)
+        _relay(upstream, handle.user_id), status_code=upstream.status_code, background=BackgroundTask(upstream.aclose)
     )
     response.raw_headers = raw_headers
     return response
+
+
+async def _relay(upstream: httpx.Response, user_id: str):
+    try:
+        async for chunk in upstream.aiter_raw():
+            yield chunk
+    except (httpx.RemoteProtocolError, httpx.ReadError) as err:
+        # The sandbox went away mid-response (released or restarted); end the body.
+        log.info("sandbox response for %s ended early: %s", user_id, err)
 
 
 async def forward_websocket(websocket: WebSocket, record: SandboxRecord, path: str) -> None:

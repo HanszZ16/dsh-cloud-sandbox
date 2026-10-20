@@ -1,132 +1,78 @@
-"""Gateway entry: login, per-user sandbox routing, and the model proxy.
+"""Gateway entry: accounts, per-user sandbox routing, the model proxy, and the web UI.
 
 Routes:
-  GET  /                    sign-in form, or the signed-in user's status page
-  POST /login, /logout      logout captures state and releases the sandbox
-  *    /u/<user>/...        the user's dsh Web, started on first use
-  *    /llm/...             DeepSeek API proxy for sandboxes (per-sandbox token)
+  /api/...              portal and admin JSON API (api.py)
+  *    /u/<user>/...    the user's dsh Web, started on first use
+  *    /llm/...         DeepSeek API proxy for sandboxes (per-sandbox token)
+  GET  /, /login, /admin/...   the React portal and admin console (web/dist)
 """
 
 from __future__ import annotations
 
 import html
+import json
 import logging
-import re
-import secrets
-import time
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import FastAPI, Form, Request, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from itsdangerous import BadSignature, URLSafeSerializer
+from fastapi import FastAPI, Request, WebSocket
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.responses import StreamingResponse
 
-from .backends import create_backend
+from .api import router as api_router
+from .backends import SandboxBackend, create_backend
 from .config import Settings, load_settings
+from .db import Database
+from .gateway import Gateway
 from .manager import SandboxManager
-from .proxy import GATEWAY_COOKIE, forward_http, forward_websocket
+from .proxy import forward_http, forward_websocket
 from .store import LocalStateStore
+from .usage import UsageMeter
 
 log = logging.getLogger("dsh_gateway")
-_USER_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 _LLM_DROP = {"host", "content-length", "connection", "authorization", "x-api-key", "cookie", "transfer-encoding"}
+# Model calls count toward quotas; model listing and search/fetch tool calls do not.
+_METERED_SUFFIXES = ("messages", "chat/completions", "completions")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, backend: SandboxBackend | None = None) -> FastAPI:
+    """The gateway app; `backend` replaces the configured one (tests)."""
     settings = settings or load_settings()
-    signer = URLSafeSerializer(settings.secret_key, salt="dsh-gateway-login")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
         logging.getLogger("httpx").setLevel(logging.WARNING)
-        backend = create_backend(settings)
-        manager = SandboxManager(settings, backend, LocalStateStore(settings.state_dir))
+        db = Database(settings.db_path)
+        manager = SandboxManager(settings, backend or create_backend(settings), LocalStateStore(settings.state_dir))
+        gw = Gateway(settings, db, manager)
+        gw.bootstrap()
         await manager.recover_orphans()
         manager.start_reaper()
         # Sandbox traffic is local or direct; never route it through a host proxy.
         app.state.sandbox_http = httpx.AsyncClient(timeout=None, trust_env=False, follow_redirects=False)
         app.state.llm_http = httpx.AsyncClient(timeout=httpx.Timeout(600, connect=30))
-        app.state.manager = manager
+        app.state.gw = gw
         if not settings.deepseek_api_key:
-            log.warning("DEEPSEEK_API_KEY is not set: model requests from sandboxes will fail with 503")
+            log.warning("DEEPSEEK_API_KEY is not set: only users with their own API key can call models")
+        if not (settings.web_dist / "index.html").exists():
+            log.warning("web UI not built at %s; run `pnpm build` in web/", settings.web_dist)
         try:
             yield
         finally:
             await manager.shutdown()
             await app.state.sandbox_http.aclose()
             await app.state.llm_http.aclose()
+            db.close()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.include_router(api_router)
 
-    def current_user(cookies) -> str | None:
-        raw = cookies.get(GATEWAY_COOKIE)
-        if raw is None:
-            return None
-        try:
-            return signer.loads(raw)
-        except BadSignature:
-            return None
-
-    def manager_of(request_or_ws) -> SandboxManager:
-        return request_or_ws.app.state.manager
-
-    @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request) -> HTMLResponse:
-        user = current_user(request.cookies)
-        if user is None:
-            password_field = (
-                '<label>密码 <input name="password" type="password" required></label>'
-                if settings.login_password
-                else ""
-            )
-            return HTMLResponse(_page("登录", f"""
-<form method="post" action="/login">
-  <label>用户名 <input name="user" pattern="[a-z0-9][a-z0-9-]{{0,30}}" required autofocus></label>
-  {password_field}
-  <button>进入我的云电脑</button>
-</form>
-<p class="hint">用户名：小写字母、数字、连字符。</p>"""))
-        record = manager_of(request).get(user)
-        if record is None:
-            status = "未运行，打开时会自动启动并恢复你上次的数据。"
-        else:
-            idle = int(time.monotonic() - record.last_seen)
-            status = (
-                f"运行中（{html.escape(record.handle.sandbox_id[:12])}），"
-                f"已运行 {int(time.monotonic() - record.started_at)} 秒，"
-                f"空闲 {idle} 秒，连接 {record.active_websockets} 个。"
-            )
-        return HTMLResponse(_page("我的云电脑", f"""
-<p>你好，<b>{html.escape(user)}</b>。沙箱状态：{status}</p>
-<p><a class="button" href="/u/{user}/">打开 DeepSeek Harness</a></p>
-<form method="post" action="/logout"><button>退出并释放沙箱</button></form>
-<p class="hint">退出时保存工作区和会话，然后销毁沙箱；空闲 {settings.idle_timeout_s} 秒也会自动释放。</p>"""))
-
-    @app.post("/login")
-    async def login(user: str = Form(...), password: str = Form("")) -> RedirectResponse:
-        if not _USER_ID.match(user):
-            return RedirectResponse("/", status_code=303)
-        if settings.login_password and not secrets.compare_digest(password, settings.login_password):
-            return RedirectResponse("/", status_code=303)
-        response = RedirectResponse(f"/u/{user}/", status_code=303)
-        response.set_cookie(
-            GATEWAY_COOKIE, signer.dumps(user), httponly=True, samesite="lax", path="/",
-            secure=settings.public_url.startswith("https://"),
-        )
-        return response
-
-    @app.post("/logout")
-    async def logout(request: Request) -> RedirectResponse:
-        user = current_user(request.cookies)
-        if user is not None:
-            await manager_of(request).release(user, "logout")
-        response = RedirectResponse("/", status_code=303)
-        response.delete_cookie(GATEWAY_COOKIE, path="/")
-        return response
+    def gw_of(conn) -> Gateway:
+        return conn.app.state.gw
 
     @app.get("/u/{user_id}")
     async def mount_root(user_id: str) -> RedirectResponse:
@@ -134,14 +80,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.api_route("/u/{user_id}/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
     async def sandbox_http(request: Request, user_id: str, path: str):
-        if current_user(request.cookies) != user_id:
-            return RedirectResponse("/", status_code=303)
-        manager = manager_of(request)
+        gw = gw_of(request)
+        user = gw.session_user(request)
+        if user is None:
+            return RedirectResponse("/login", status_code=303)
+        if user.username != user_id:
+            return RedirectResponse(f"/u/{user.username}/", status_code=303)
         try:
-            record = await manager.ensure(user_id)
+            record = await gw.manager.ensure(user.username, gw.policy_for(user))
         except Exception as err:
             log.exception("starting sandbox for %s failed", user_id)
-            return HTMLResponse(_page("启动失败", f"<pre>{html.escape(str(err))}</pre>"), status_code=502)
+            return HTMLResponse(_error_page("云电脑启动失败", str(err)), status_code=502)
         record.touch()
         if (
             path == ""
@@ -153,16 +102,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # keeps only path and query so the browser stays on the authority it signed
             # in on; dsh's printed URL names GATEWAY_PUBLIC_URL, which may differ.
             return RedirectResponse(
-                same_origin_target(await manager.backend.launch_url(record.handle)), status_code=303
+                same_origin_target(await gw.manager.backend.launch_url(record.handle)), status_code=303
             )
         return await forward_http(request, request.app.state.sandbox_http, record, path, f"/u/{user_id}/")
 
     @app.websocket("/u/{user_id}/{path:path}")
     async def sandbox_ws(websocket: WebSocket, user_id: str, path: str) -> None:
-        if current_user(websocket.cookies) != user_id:
+        gw = gw_of(websocket)
+        user = gw.session_user(websocket)
+        if user is None or user.username != user_id:
             await websocket.close(code=4401)
             return
-        record = manager_of(websocket).get(user_id)
+        record = gw.manager.get(user_id)
         if record is None:
             await websocket.close(code=4404)
             return
@@ -170,58 +121,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.api_route("/llm/{path:path}", methods=["GET", "POST"])
     async def llm_proxy(request: Request, path: str):
+        gw = gw_of(request)
         token = request.headers.get("x-api-key") or ""
         bearer = request.headers.get("authorization", "")
         if not token and bearer.lower().startswith("bearer "):
             token = bearer[7:]
-        manager = manager_of(request)
-        user = manager.user_for_model_token(token)
-        if user is None:
-            return JSONResponse({"error": {"message": "invalid sandbox token"}}, status_code=401)
-        if not settings.deepseek_api_key:
-            return JSONResponse(
-                {"error": {"message": "gateway has no DEEPSEEK_API_KEY configured"}}, status_code=503
-            )
-        record = manager.get(user)
+        body = await request.body()
+        username = gw.manager.user_for_model_token(token)
+        if username is None:
+            if settings.llm_allow_passthrough and token and not token.startswith("dshgw-"):
+                # A key the user saved in dsh's own settings: forward it unchanged, unmetered.
+                return await _forward_llm(request, path, token, body, meter=None)
+            return _llm_error(401, "invalid sandbox token")
+        user = gw.db.get_user_by_name(username)
+        if user is None or user.disabled:
+            return _llm_error(403, "account is disabled")
+        group = gw.db.get_group(user.group_id) or {}
+        key = gw.user_api_key(user)
+        if key is None:
+            if not group.get("allow_shared_key"):
+                return _llm_error(403, "no API key: set your DeepSeek API key in the portal")
+            if not settings.deepseek_api_key:
+                return _llm_error(503, "gateway has no DEEPSEEK_API_KEY configured; set your own key in the portal")
+            key = settings.deepseek_api_key
+        meter = None
+        if request.method == "POST" and path.rstrip("/").endswith(_METERED_SUFFIXES):
+            model = _model_of(body)
+            allowed = group.get("allowed_models") or []
+            if allowed and model not in allowed:
+                return _llm_error(403, f"model {model!r} is not allowed for your group; allowed: {', '.join(allowed)}")
+            limit = group.get("daily_request_limit") or 0
+            if limit and gw.db.requests_today(user.id) >= limit:
+                return _llm_error(429, f"daily request limit {limit} reached")
+            gw.db.count_request(user.id)
+            meter = UsageMeter(lambda i, o: gw.db.add_tokens(user.id, i, o))
+        record = gw.manager.get(username)
         if record is not None:
             # A running agent turn counts as activity even with the browser closed.
             record.touch()
+        return await _forward_llm(request, path, key, body, meter)
+
+    async def _forward_llm(request: Request, path: str, key: str, body: bytes, meter: UsageMeter | None):
         headers = {k: v for k, v in request.headers.items() if k.lower() not in _LLM_DROP}
-        headers["authorization"] = f"Bearer {settings.deepseek_api_key}"
-        headers["x-api-key"] = settings.deepseek_api_key
+        headers["authorization"] = f"Bearer {key}"
+        headers["x-api-key"] = key
         url = f"{settings.deepseek_upstream}/{path}"
         if request.url.query:
             url += f"?{request.url.query}"
         client: httpx.AsyncClient = request.app.state.llm_http
-        upstream = await client.send(
-            client.build_request(request.method, url, headers=headers, content=await request.body()),
-            stream=True,
-        )
+        upstream = await client.send(client.build_request(request.method, url, headers=headers, content=body), stream=True)
         passthrough = {
             k: v for k, v in upstream.headers.items()
-            if k.lower() not in {"content-length", "transfer-encoding", "connection", "set-cookie"}
+            if k.lower() not in {"content-length", "transfer-encoding", "connection", "set-cookie", "content-encoding"}
         }
+        chunks = upstream.aiter_bytes() if meter is None else meter.observe(upstream.aiter_bytes())
         return StreamingResponse(
-            upstream.aiter_raw(), status_code=upstream.status_code, headers=passthrough,
-            background=BackgroundTask(upstream.aclose),
+            chunks, status_code=upstream.status_code, headers=passthrough, background=BackgroundTask(upstream.aclose)
         )
 
-    return app
+    # Web UI: hashed build assets plus the single-page app for every other UI route.
+    assets = settings.web_dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
+    @app.get("/{path:path}", include_in_schema=False)
+    async def spa(path: str):
+        if path.startswith(("api/", "u/", "llm/")):
+            return JSONResponse({"detail": "not found"}, status_code=404)
+        candidate = (settings.web_dist / path).resolve()
+        if path and candidate.is_file() and settings.web_dist in candidate.parents:
+            return FileResponse(candidate)
+        index = settings.web_dist / "index.html"
+        if not index.exists():
+            return HTMLResponse(_error_page("前端尚未构建", "在 web/ 目录运行 pnpm install && pnpm build"), status_code=503)
+        return FileResponse(index, headers={"cache-control": "no-cache"})
+
+    return app
 
 
 def same_origin_target(url: str) -> str:
     """Path and query of `url`, so a redirect never moves the browser to another authority."""
     parts = urlsplit(url)
     return parts.path + (f"?{parts.query}" if parts.query else "")
-def _page(title: str, body: str) -> str:
-    return f"""<!doctype html><html lang="zh"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} · DSH Cloud</title>
-<style>
-body{{font:15px/1.6 system-ui,sans-serif;max-width:560px;margin:12vh auto;padding:0 16px;color:#1f2328;background:#fff}}
-@media (prefers-color-scheme:dark){{body{{color:#e6edf3;background:#0d1117}} input{{background:#161b22;color:inherit}}}}
-h1{{font-size:22px}} label{{display:block;margin:12px 0}} input{{padding:6px 8px;border:1px solid #8b949e;border-radius:6px;width:100%;box-sizing:border-box}}
-button,.button{{display:inline-block;margin-top:8px;padding:8px 14px;border-radius:6px;border:0;background:#4d6bfe;color:#fff;text-decoration:none;cursor:pointer;font:inherit}}
-.hint{{color:#8b949e;font-size:13px}} pre{{white-space:pre-wrap}}
-</style></head><body><h1>{title}</h1>{body}</body></html>"""
 
+
+def _model_of(body: bytes) -> str | None:
+    try:
+        value = json.loads(body).get("model")
+    except (ValueError, AttributeError):
+        # Not a JSON object: the upstream rejects it; there is no model to check.
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _llm_error(status: int, message: str) -> JSONResponse:
+    # Anthropic error envelope, which dsh's provider surfaces to the user verbatim.
+    return JSONResponse(
+        {"type": "error", "error": {"type": "permission_error" if status == 403 else "api_error", "message": message}},
+        status_code=status,
+    )
+
+
+def _error_page(title: str, detail: str) -> str:
+    return f"""<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)}</title>
+<style>body{{font:14px/1.6 -apple-system,BlinkMacSystemFont,'PingFang SC',sans-serif;max-width:640px;margin:12vh auto;padding:0 16px;color:#0f1115;background:#fff}}
+@media (prefers-color-scheme:dark){{body{{color:#f2f3f5;background:#16171a}}}}a{{color:#4d6bfe}}pre{{white-space:pre-wrap;opacity:.8}}</style></head>
+<body><h2>{html.escape(title)}</h2><pre>{html.escape(detail)}</pre><p><a href="/">返回门户</a></p></body></html>"""
