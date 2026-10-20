@@ -1,10 +1,12 @@
 /*
- * Account menu for the workspace, injected by the gateway into every dsh Web page.
+ * Workspace account entries, injected by the gateway into every dsh Web page.
  *
- * A round avatar in the bottom-right corner opens a menu: account settings (a
- * panel showing /account in an iframe, without leaving the workspace), the admin
- * console for administrators, and sign out (the workspace is saved first, with
- * progress). It also watches the workspace: when it goes to sleep or restarts
+ * dsh's own sidebar "More" menu gains, at its top, the signed-in user, account
+ * settings (a panel showing /account in an iframe, without leaving the
+ * workspace) and the admin console for administrators, and at its bottom, sign
+ * out (the workspace is saved first, with progress). The entries are clones of
+ * dsh's own menu items, so they match its look. dsh's DeepSeek account item is
+ * relabelled "DeepSeek Sign in" so it is not mistaken for the workspace account. It also watches the workspace: when it goes to sleep or restarts
  * while the page is open, a cover explains that and offers to resume, instead of
  * leaving dsh's connection errors on screen.
  *
@@ -35,30 +37,6 @@
     background: var(--dsw-alias-bg-layer-2, #fff); color: var(--dsw-alias-label-primary, #0f1115);
     box-shadow: var(--dsw-elevation-prominent, 0 8px 28px rgba(0, 0, 0, 0.16));
   }
-  .avatar {
-    display: inline-flex; align-items: center; justify-content: center; flex: none;
-    width: 32px; height: 32px; border-radius: 50%; font-size: 13px; font-weight: 500;
-    color: var(--dsw-alias-label-secondary, #555); background: var(--dsw-alias-bg-skeleton, #eceef1);
-  }
-  .fab {
-    position: fixed; right: 16px; bottom: 16px; z-index: 2147483000; padding: 2px; border: none; border-radius: 50%;
-    cursor: pointer; background: var(--dsw-alias-bg-layer-2, #fff);
-    box-shadow: var(--dsw-elevation-panel, 0 2px 10px rgba(0, 0, 0, 0.12));
-  }
-  .fab:hover .avatar { background: var(--dsw-alias-interactive-bg-hover, #e3e5e8); }
-  .menu {
-    position: fixed; right: 16px; bottom: 58px; z-index: 2147483000; width: 240px; padding: 6px;
-    border-radius: var(--dsw-radius-md, 12px);
-  }
-  .who { display: flex; align-items: center; gap: 10px; padding: 8px 8px 10px; }
-  .who b { display: block; font-size: 14px; font-weight: 500; }
-  .who small { display: block; font-size: 12px; color: var(--dsw-alias-label-tertiary, #8b8d91); }
-  .sep { height: 0.5px; margin: 4px 6px; background: var(--dsw-alias-border-l3, rgba(0, 0, 0, 0.12)); }
-  .item {
-    display: block; width: 100%; padding: 8px 10px; border: none; border-radius: 8px; text-align: left;
-    background: transparent; color: inherit; font-size: 14px; cursor: pointer; text-decoration: none;
-  }
-  .item:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05)); }
   .layer { position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center; padding: 16px; }
   .mask { position: absolute; inset: 0; background: var(--dsw-alias-bg-mask-1, rgba(0, 0, 0, 0.32)); }
   .dialog { position: relative; width: 100%; max-width: 420px; padding: 22px 24px 20px; border-radius: var(--dsw-radius-panel, 28px); }
@@ -93,15 +71,6 @@
   .cover .title { font-size: 17px; font-weight: 500; }
   .cover .btn { margin-top: 14px; }
 </style>
-<button class="fab" title="账号"><span class="avatar fab-avatar"></span></button>
-<div class="menu surface" hidden>
-  <div class="who"><span class="avatar menu-avatar"></span><div><b class="name"></b><small class="username"></small></div></div>
-  <div class="sep"></div>
-  <button class="item open-account">账号设置</button>
-  <a class="item admin-link" href="/admin" hidden>管理后台</a>
-  <div class="sep"></div>
-  <button class="item sign-out">退出登录</button>
-</div>
 <div class="layer account-layer" hidden>
   <div class="mask"></div>
   <div class="panel surface">
@@ -133,50 +102,145 @@
 </div>`
 
   const $ = (selector) => root.querySelector(selector)
-  const menu = $('.menu')
   const accountLayer = $('.account-layer')
   const exitLayer = $('.exit-layer')
   const cover = $('.cover')
   const errorLine = $('.error')
   let exiting = false
 
-  // Menu
-  $('.fab').addEventListener('click', (event) => {
-    event.stopPropagation()
-    menu.hidden = !menu.hidden
-  })
-  menu.addEventListener('click', (event) => event.stopPropagation())
-  document.addEventListener('click', () => {
-    menu.hidden = true
-  })
+  // Entries in dsh's sidebar "More" menu
+  let me = null
+  fetch('/api/me', { credentials: 'same-origin' })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((value) => {
+      me = value
+    })
+    .catch(() => undefined)
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
-    menu.hidden = true
     accountLayer.hidden = true
     if (!exiting) exitLayer.hidden = true
   })
 
-  fetch('/api/me', { credentials: 'same-origin' })
-    .then((response) => (response.ok ? response.json() : null))
-    .then((me) => {
-      if (!me) return
-      const name = me.display_name || me.username
-      const initial = name.slice(0, 1).toUpperCase()
-      $('.fab-avatar').textContent = initial
-      $('.menu-avatar').textContent = initial
-      $('.name').textContent = name
-      $('.username').textContent = me.username
-      $('.fab').title = name
-      $('.admin-link').hidden = me.role !== 'admin'
+  // dsh's DeepSeek account item, by its label in either locale.
+  const DEEPSEEK_LABELS = {
+    'Sign in': 'DeepSeek Sign in',
+    'Sign out': 'DeepSeek Sign out',
+    'Log in': 'DeepSeek Sign in',
+    'Log out': 'DeepSeek Sign out',
+    登录: '登录 DeepSeek 账号',
+    退出登录: '退出 DeepSeek 账号',
+    退出: '退出 DeepSeek 账号',
+  }
+  const ICONS = {
+    account:
+      '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M4 20a8 8 0 0 1 16 0"/>',
+    admin: '<path d="M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>',
+    signOut: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 16l-4-4 4-4"/><path d="M6 12h10"/>',
+  }
+
+  /** The trigger of the sidebar More menu: dsh marks it with its account state. */
+  const moreTrigger = () => document.querySelector('button[aria-haspopup="menu"][data-signed-out][aria-expanded="true"]')
+
+  function labelOf(item) {
+    const spans = item.querySelectorAll('span')
+    return spans.length > 1 ? spans[1] : item
+  }
+
+  function entry(template, icon, label, onSelect) {
+    const wrapper = template.cloneNode(true)
+    wrapper.dataset.dshCloud = 'entry'
+    const item = wrapper.querySelector('[role="menuitem"]') || wrapper
+    const iconBox = item.querySelector('span')
+    const size = iconBox?.querySelector('svg')?.getAttribute('width') || '16'
+    if (iconBox) {
+      iconBox.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>`
+    }
+    labelOf(item).textContent = label
+    item.querySelectorAll('span').forEach((span, index) => {
+      if (index > 1) span.textContent = ''
     })
-    .catch(() => undefined)
+    item.removeAttribute('aria-disabled')
+    item.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      moreTrigger()?.click()
+      onSelect()
+    })
+    return wrapper
+  }
+
+  function separator() {
+    const line = document.createElement('div')
+    line.dataset.dshCloud = 'entry'
+    line.setAttribute('role', 'separator')
+    line.style.cssText = 'height:0.5px;margin:4px 8px;background:var(--dsw-alias-border-l3, rgba(0,0,0,0.12))'
+    return line
+  }
+
+  function header() {
+    const row = document.createElement('div')
+    row.dataset.dshCloud = 'entry'
+    row.style.cssText =
+      'display:flex;align-items:center;gap:10px;padding:8px 10px 6px;min-width:200px;color:var(--dsw-alias-label-primary)'
+    const name = me ? me.display_name || me.username : ''
+    const avatar = document.createElement('span')
+    avatar.textContent = name.slice(0, 1).toUpperCase()
+    avatar.style.cssText =
+      'display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;font-size:12px;font-weight:500;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-skeleton)'
+    const text = document.createElement('div')
+    text.style.cssText = 'display:flex;flex-direction:column;min-width:0;line-height:18px'
+    const strong = document.createElement('span')
+    strong.textContent = name
+    strong.style.cssText = 'font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
+    const small = document.createElement('span')
+    small.textContent = me ? me.username : ''
+    small.style.cssText = 'font-size:12px;color:var(--dsw-alias-label-tertiary)'
+    text.append(strong, small)
+    row.append(avatar, text)
+    return row
+  }
+
+  function extendMoreMenu(menu) {
+    if (!moreTrigger() || menu.querySelector('[data-dsh-cloud]')) return
+    const items = [...menu.querySelectorAll('[role="menuitem"]')]
+    if (!items.length) return
+    for (const item of items) {
+      const label = labelOf(item)
+      const renamed = DEEPSEEK_LABELS[label.textContent.trim()]
+      if (renamed) label.textContent = renamed
+    }
+    const template = items[0].parentElement !== menu && items[0].parentElement.children.length === 1 ? items[0].parentElement : items[0]
+    const list = template.parentElement
+    const first = list.firstChild
+    const top = [header(), entry(template, ICONS.account, '账号设置', openAccount)]
+    if (me && me.role === 'admin') {
+      top.push(
+        entry(template, ICONS.admin, '管理后台', () => {
+          window.location.href = '/admin'
+        }),
+      )
+    }
+    top.push(separator())
+    for (const node of top) list.insertBefore(node, first)
+    list.append(separator(), entry(template, ICONS.signOut, '退出登录', openSignOut))
+  }
+
+  new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (!(node instanceof HTMLElement)) continue
+        const menu = node.matches('[role="menu"]') ? node : node.querySelector('[role="menu"]')
+        if (menu) extendMoreMenu(menu)
+      }
+    }
+  }).observe(document.body || document.documentElement, { childList: true, subtree: true })
 
   // Account settings, without leaving the workspace
-  $('.open-account').addEventListener('click', () => {
-    menu.hidden = true
+  function openAccount() {
     $('iframe').src = '/account'
     accountLayer.hidden = false
-  })
+  }
   const closeAccount = () => {
     accountLayer.hidden = true
     $('iframe').src = 'about:blank'
@@ -202,11 +266,10 @@
     return response.json()
   }
 
-  $('.sign-out').addEventListener('click', () => {
-    menu.hidden = true
+  function openSignOut() {
     errorLine.hidden = true
     exitLayer.hidden = false
-  })
+  }
   $('.cancel').addEventListener('click', () => {
     exitLayer.hidden = true
   })
@@ -263,9 +326,7 @@
     button.hidden = !action
     button.textContent = action || ''
     button.onclick = onAction || null
-    menu.hidden = true
     accountLayer.hidden = true
-    $('.fab').hidden = true
     cover.hidden = false
   }
 

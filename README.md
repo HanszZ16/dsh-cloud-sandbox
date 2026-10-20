@@ -189,7 +189,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 ### 6. 验证
 
 1. 打开 http://localhost:8000 ，用 `admin` 和 `GATEWAY_ADMIN_PASSWORD` 登录；
-2. 进入工作空间后，点右下角的头像 → **管理后台 → 用户**，新建一个普通用户；
+2. 进入工作空间后，点左侧栏底部的 **More** → **管理后台 → 用户**，新建一个普通用户；
 3. 退出，用新用户登录：加载页显示"正在准备你的工作空间"，几秒后自动进入 dsh；
 4. 第一次进入时 dsh 会显示预览说明，点 Continue；选择工作区时直接点 **Open**（即 `/home/agent`）；
 5. 发一条消息。管理后台**概览**里的"今日模型请求"会增加。
@@ -206,7 +206,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 |---|---|
 | `/login` | 登录页。账号由管理员创建 |
 | `/`（加载页） | 登录后自动到这里：唤醒工作空间，显示一条细进度条（"正在准备你的工作空间" / "正在恢复你的工作空间"），就绪后自动进入 dsh。打不开时只显示"工作空间暂时无法打开"和重试按钮，原始错误只给管理员看 |
-| dsh 页面右下角的头像 | 账号菜单：**账号设置**（在当前页面弹出面板，不离开工作空间）、**管理后台**（仅管理员）、**退出登录** |
+| dsh 左侧栏底部的 **More** 菜单 | 网关在 dsh 自己的菜单里加入：顶部显示当前用户，**账号设置**（在当前页面弹出面板，不离开工作空间）、**管理后台**（仅管理员），底部是**退出登录**。dsh 原有的 Sign in 改名为 **DeepSeek Sign in**（登录 DeepSeek 账号，和工作空间账号区分开） |
 | 账号设置（`/account`） | API Key、今日用量、团队预装的插件、修改密码 |
 | 退出登录 | 先保存工作空间（带进度），再退出，回到登录页 |
 | 页面开着时工作空间休眠了 | 页面盖上"工作空间已休眠，你的文件、对话和设置都已保存"，点**恢复工作空间**回到加载页。页面每 10 秒检查一次，切回标签页时也会检查 |
@@ -313,7 +313,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 
 跳转只保留路径和查询参数，不带主机名，所以用 `localhost` 或 `127.0.0.1` 访问都可以。
 
-网关转发 dsh 的 HTML 页面时，会在 `</head>` 前插入 `<script src="/dsh-cloud-overlay.js" defer>`（dsh 没有 CSP，本身也使用内联脚本）。这个脚本在 Shadow DOM 里渲染右下角的头像和账号菜单，颜色取自 dsh 自己的设计变量。账号设置是一个嵌入 `/account` 的 iframe 面板；退出登录通过同源的 `/api/me/sandbox/release` 和 `/api/auth/logout` 完成；它还定时读取 `/api/me/sandbox`（不计入活跃时间），在工作空间休眠或重启时显示提示层。
+网关转发 dsh 的 HTML 页面时，会在 `</head>` 前插入 `<script src="/dsh-cloud-overlay.js" defer>`（dsh 没有 CSP，本身也使用内联脚本）。这个脚本监听 dsh 左下角 More 菜单的出现（触发按钮带 `data-signed-out` 和 `aria-haspopup="menu"`），克隆 dsh 自己的菜单项插入账号入口，所以外观和原生菜单一致；dsh 的 Sign in / Sign out 项改名为 DeepSeek Sign in / DeepSeek Sign out。弹窗、面板和提示层渲染在 Shadow DOM 里，颜色取自 dsh 自己的设计变量。账号设置是一个嵌入 `/account` 的 iframe 面板；退出登录通过同源的 `/api/me/sandbox/release` 和 `/api/auth/logout` 完成；它还定时读取 `/api/me/sandbox`（不计入活跃时间），在工作空间休眠或重启时显示提示层。
 
 **启动和释放的进度**
 
@@ -465,6 +465,7 @@ docker exec -it <容器名> bash
 - **多实例**：网关的沙箱状态在内存里，多个网关共同服务同一批用户时需要把状态移到 Redis/数据库并加分布式锁（`GATEWAY_INSTANCE_ID` 只解决了互不回收）；
 - **体验**：dsh 第一次进入时要手动选择目录；预装插件的安装进度只在容器日志里，用户看不到；用户打开深层链接时如果 dsh 需要重新换 cookie，会回到 dsh 首页而不是原链接；
 - **规格**：加预热池降低冷启动时间；
+- **dsh 菜单注入**：账号入口依赖 dsh More 菜单的 DOM（触发按钮的 `data-signed-out`、菜单项 `role="menuitem"`、Sign in 的文字）。dsh 改版后若菜单里看不到账号设置和退出登录，需要调整 `web/public/dsh-cloud-overlay.js`；
 - **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.1-rc.2` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。
 
 ## 上线前必做：每个用户一块持久卷
