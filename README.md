@@ -273,24 +273,26 @@ The E2B backend treats the image reference as a template id and does not check l
 
 ## Workspace browser: watch and take over the agent's browser
 
-Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Workspace browser" tab of dsh's right sidebar, where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent.
+Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Workspace browser" tab of dsh's right sidebar, where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent. The tab opens by itself (expanding a collapsed sidebar) when the agent starts operating the browser.
 
 ```
 Sandbox
  ├─ Chromium (started on first use, headless; profile in ~/.config/dsh-workspace-browser, so logins persist with the workspace)
  └─ Browser hub, sandbox-image/base/browser-hub
-      ├─ 127.0.0.1:9223  for the agent: a pass-through CDP proxy that Playwright MCP attaches to; passing through it is how "Agent is operating" is shown
+      ├─ 127.0.0.1:9223  for the agent: a pass-through CDP proxy that playwright-mcp --cdp-endpoint connects to; passing through it is how "Agent is operating" is shown
       └─ :3081           for the user: a small protocol for frames, tabs, and input (raw CDP is not exposed)
 Gateway  /u/<user>/_dsh-cloud/browser  →  :3081 (that user only)
-dsh      right-sidebar plugin dsh-cloud-workspace-browser: live view + address bar + back/forward/reload + tabs + status
+dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName browser, tools mcp__browser__*) + a right-sidebar plugin (live view, address bar, back/forward/reload, tabs, status; opens when the agent starts operating)
 ```
 
-**Enabling it:** in the admin console, **Plugins & MCP → 添加工作空间浏览器 (add workspace browser)** (the template fills in the spec `file:/usr/local/lib/dsh-cloud/workspace-browser`), then assign it to groups or users. It is a dsh bundle: on first start it installs `dsh-browser-use` and `dsh-experimental-browser-use-playwright-mcp` in the background (npm must be reachable, see `SANDBOX_HTTP_PROXY`) and mounts three rows: the browser service, Playwright MCP attached to the hub, and the right-sidebar plugin. Once installed, open **Workspace browser** from the guide page of dsh's right sidebar; in new sessions the agent has the `mcp__playwright-mcp__*` tools.
+**Enabling it:** in the admin console, **Plugins & MCP → 添加工作空间浏览器 (add workspace browser)** (the template fills in the spec `file:/usr/local/lib/dsh-cloud/workspace-browser`), then assign it to groups or users. It is a dsh bundle shipped in the image together with `@playwright/mcp` (0.0.80), so installing it needs no network and happens before dsh starts. It mounts two rows: Playwright MCP connected to the hub, and the right-sidebar plugin. Restart the workspace after assigning it: the agent has the `mcp__browser__*` tools in every session, and **Workspace browser** can also be opened by hand from the right sidebar's guide page.
 
 **Notes:**
 
 - It uses Chrome DevTools Protocol page screencasting (`Page.startScreencast`) plus input forwarding, with no virtual display. The view shows page content; the browser's own chrome (address bar, tabs) is drawn by the plugin. alert/confirm/prompt dialogs from pages appear in the panel.
-- Only one dsh session at a time can hold the browser (a limit of Playwright MCP's attach mode): sessions started meanwhile have no browser tools until the holder ends.
+- Playwright MCP is mounted as an ordinary MCP server, so **every session shares the same browser and the same tools**. dsh's experimental browser plugin (`dsh-experimental-browser-use-playwright-mcp`) is not used, because its attach mode lets only one session hold the browser at a time and leaves later sessions without browser tools.
+- Tool results carry no screenshots (`--image-responses omit`) because the default DeepSeek models read text; page structure still arrives as a text snapshot. Drop the flag when using a model that reads images.
+- When the image carries a new version of the plugin, users get it the next time their workspace starts, before dsh boots.
 - You and the agent can act at the same time; the panel only signals "Agent is operating" and does not block the agent.
 - The right-sidebar plugin is written directly in dsh's client module format (`workspace-browser/client.js`) and uses dsh's pre-stable right-sidebar contract (`sidebarRightTabs`, the `sidebar.right.pane.tab` slot); re-verify after upgrading dsh.
 - dsh's built-in `ui-sidebar-browser` (the right-sidebar Browser) is something else: it opens pages in an iframe in the user's own browser, is unrelated to the agent, and `localhost` there means the user's own computer. It can be enabled separately with the config patch `- id: ui-sidebar-browser` / `disabled: false`, for reading pages beside the conversation.

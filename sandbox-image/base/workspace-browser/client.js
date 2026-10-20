@@ -12,6 +12,8 @@
  * The live view connects to /u/<user>/_dsh-cloud/browser on the page's own
  * origin; the gateway forwards it to the sandbox's browser hub for the
  * signed-in owner only. See the hub (browser-hub/hub.mjs) for the protocol.
+ * Each dsh page also keeps a watch-only connection there and opens this tab
+ * when the agent starts operating the browser.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-cloud-workspace-browser',
@@ -30,6 +32,8 @@ window.__ModuleLoader__.load({
           description: '实时查看并接管 Agent 正在操作的浏览器',
           address: '输入网址后回车', starting: '正在启动浏览器…', connecting: '正在连接…',
           reconnecting: '连接已断开，正在重连…', agent: 'Agent 正在操作', you: '你可以直接点击和输入',
+          unavailable: '这个工作空间还没有浏览器。请退出登录后重新登录，让工作空间用新版本重新启动。',
+          unauthorized: '登录已失效，请刷新页面重新登录。',
           back: '后退', forward: '前进', reload: '刷新', newTab: '新标签页', closeTab: '关闭标签页',
           ok: '确定', cancel: '取消', untitled: '新标签页',
         }
@@ -38,6 +42,8 @@ window.__ModuleLoader__.load({
           description: 'Watch and take over the browser the agent is operating',
           address: 'Enter a URL', starting: 'Starting the browser…', connecting: 'Connecting…',
           reconnecting: 'Disconnected, reconnecting…', agent: 'Agent is operating', you: 'Click and type to take over',
+          unavailable: 'This workspace has no browser yet. Sign out and back in so it restarts on the current version.',
+          unauthorized: 'Your sign-in has expired. Reload the page to sign in again.',
           back: 'Back', forward: 'Forward', reload: 'Reload', newTab: 'New tab', closeTab: 'Close tab',
           ok: 'OK', cancel: 'Cancel', untitled: 'New tab',
         }
@@ -50,12 +56,16 @@ window.__ModuleLoader__.load({
     const modifiersOf = (e) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0)
     const BUTTONS = ['left', 'middle', 'right']
 
-    /** The live-view socket URL for the workspace this page belongs to. */
-    function socketUrl() {
+    /** The live-view socket URL for the workspace this page belongs to; `watch` asks for agent events only. */
+    function socketUrl(watch) {
       const mount = window.location.pathname.match(/^\/u\/[^/]+\//)
       const base = mount ? mount[0] : '/'
-      return `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${base}_dsh-cloud/browser`
+      const url = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${base}_dsh-cloud/browser`
+      return watch ? `${url}?watch=1` : url
     }
+    // Gateway close codes: the workspace has no browser hub (4404), or the session is not the owner's (4401).
+    const NO_BROWSER = 4404
+    const NOT_SIGNED_IN = 4401
 
     function Icon({ size = 16, className, d }) {
       return h('svg', {
@@ -141,8 +151,13 @@ window.__ModuleLoader__.load({
               default:
             }
           }
-          ws.onclose = () => {
+          ws.onclose = (event) => {
             if (closed) return
+            if (event.code === NO_BROWSER || event.code === NOT_SIGNED_IN) {
+              setState(event.code === NO_BROWSER ? 'unavailable' : 'unauthorized')
+              timer = window.setTimeout(connect, 15000)
+              return
+            }
             setState('reconnecting')
             retry = Math.min(retry + 1, 6)
             timer = window.setTimeout(connect, 500 * 2 ** retry)
@@ -237,7 +252,9 @@ window.__ModuleLoader__.load({
         style: { ...css.button, opacity: disabled ? 0.35 : 1, cursor: disabled ? 'default' : 'pointer' },
       }, h(Icon, { d }))
 
-      const placeholder = state === 'reconnecting' ? T.reconnecting : state === 'starting' ? T.starting : T.connecting
+      const placeholder = {
+        reconnecting: T.reconnecting, starting: T.starting, unavailable: T.unavailable, unauthorized: T.unauthorized,
+      }[state] ?? T.connecting
 
       return h('div', { style: css.root },
         h('form', { style: css.toolbar, onSubmit: go },
@@ -277,11 +294,11 @@ window.__ModuleLoader__.load({
         ),
         h('div', { style: css.stage },
           frame === null || state !== 'ready'
-            ? h('span', { style: css.placeholder }, frame === null ? placeholder : null)
+            ? h('span', { style: { ...css.placeholder, maxWidth: 360, padding: 16, textAlign: 'center' } }, frame === null || state === 'unavailable' || state === 'unauthorized' ? placeholder : null)
             : null,
           frame !== null ? h('img', {
             ref: image, src: frame, alt: '', draggable: false,
-            style: { ...css.frame, display: state === 'reconnecting' ? 'none' : 'block' },
+            style: { ...css.frame, display: ['reconnecting', 'unavailable', 'unauthorized'].includes(state) ? 'none' : 'block' },
             onMouseDown, onMouseUp, onMouseMove, onContextMenu: (e) => e.preventDefault(),
           }) : null,
           h('textarea', {
@@ -331,6 +348,49 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab', key: ID,
       }, WorkspaceBrowser)), 'dsh-cloud-workspace-browser: body')
+      ctx.effect(() => watchAgent(() => {
+        try {
+          // Opens the tab in the current session, or brings an open one forward.
+          ctx.sidebarRight.openTab(KIND)
+        } catch (err) {
+          // No session is selected (e.g. the welcome page): nothing to open the tab in.
+          console.debug('dsh-cloud-workspace-browser: not opening the live view', err)
+        }
+      }), 'dsh-cloud-workspace-browser: follow agent')
+    }
+
+    /** Call `onStart` each time the agent starts operating the browser; returns the disposer. */
+    function watchAgent(onStart) {
+      let stopped = false
+      let socket = null
+      let timer = 0
+      let retry = 0
+      let active = false
+      const connect = () => {
+        socket = new WebSocket(socketUrl(true))
+        socket.onopen = () => {
+          retry = 0
+        }
+        socket.onmessage = (event) => {
+          const message = JSON.parse(event.data)
+          if (message.type !== 'agent') return
+          if (message.active && !active) onStart()
+          active = Boolean(message.active)
+        }
+        socket.onclose = (event) => {
+          if (stopped) return
+          active = false
+          // Without a browser hub (or a valid session), check back rarely.
+          const delay = event.code === NO_BROWSER || event.code === NOT_SIGNED_IN ? 60000 : 1000 * 2 ** Math.min(++retry, 5)
+          timer = window.setTimeout(connect, delay)
+        }
+      }
+      connect()
+      return () => {
+        stopped = true
+        window.clearTimeout(timer)
+        socket?.close()
+      }
     }
     return module.exports
   },

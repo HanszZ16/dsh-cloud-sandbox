@@ -4,7 +4,7 @@
  * - Chromium starts on first use (headless, remote debugging on 127.0.0.1:CDP_PORT)
  *   with its profile under the user's home, so logins survive sleep.
  * - Agent endpoint, 127.0.0.1:AGENT_PORT: a pass-through Chrome DevTools Protocol
- *   proxy for dsh's Playwright MCP (`mode: attach`, `endpoint: http://127.0.0.1:9223`).
+ *   proxy for the Playwright MCP server (`playwright-mcp --cdp-endpoint http://127.0.0.1:9223`).
  *   Passing through here lets viewers see when the agent is operating.
  * - Viewer endpoint, HUB_HOST:HUB_PORT: a WebSocket that the gateway forwards for the
  *   signed-in user only. It speaks a small JSON protocol instead of raw CDP:
@@ -20,6 +20,9 @@
  *                      {type:"activate", id} | {type:"new-tab"} | {type:"close-tab", id}
  *                      {type:"dialog", accept, promptText}
  *   Coordinates are page CSS pixels of the frame the viewer last received.
+ *   A connection with ?watch=1 only receives {type:"agent"} events: it neither
+ *   starts Chromium nor receives frames. dsh pages keep one open to bring the
+ *   live view forward when the agent starts operating the browser.
  */
 import { spawn } from 'node:child_process'
 import { rmSync } from 'node:fs'
@@ -408,17 +411,20 @@ function normalizeUrl(input) {
 
 // Agent endpoint: a pass-through CDP proxy that notes activity
 
+const watchers = new Set()
 let agentTimer = null
+
+function announceAgent(active) {
+  viewer.agentActive = active
+  viewer.broadcast({ type: 'agent', active })
+  const text = JSON.stringify({ type: 'agent', active })
+  for (const socket of watchers) if (socket.readyState === WebSocket.OPEN) socket.send(text)
+}
+
 function agentActivity() {
-  if (!viewer.agentActive) {
-    viewer.agentActive = true
-    viewer.broadcast({ type: 'agent', active: true })
-  }
+  if (!viewer.agentActive) announceAgent(true)
   clearTimeout(agentTimer)
-  agentTimer = setTimeout(() => {
-    viewer.agentActive = false
-    viewer.broadcast({ type: 'agent', active: false })
-  }, AGENT_IDLE_MS)
+  agentTimer = setTimeout(() => announceAgent(false), AGENT_IDLE_MS)
 }
 
 const agentServer = http.createServer(async (request, response) => {
@@ -467,7 +473,13 @@ const viewerServer = http.createServer((request, response) => {
   response.end('dsh-cloud workspace browser hub\n')
 })
 const viewerSockets = new WebSocketServer({ server: viewerServer, perMessageDeflate: false })
-viewerSockets.on('connection', (socket) => {
+viewerSockets.on('connection', (socket, request) => {
+  if (new URL(request.url ?? '/', 'http://hub').searchParams.get('watch') === '1') {
+    watchers.add(socket)
+    socket.on('close', () => watchers.delete(socket))
+    socket.send(JSON.stringify({ type: 'agent', active: viewer.agentActive }))
+    return
+  }
   viewer.add(socket)
 })
 viewerServer.listen(HUB_PORT, HUB_HOST, () => log(`viewer endpoint ws://${HUB_HOST}:${HUB_PORT}`))

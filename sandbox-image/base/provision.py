@@ -3,22 +3,29 @@
 Reads /etc/dsh-cloud/policy.json, written by the gateway before the sandbox
 starts. Every entry is applied once per user: applied keys are recorded in
 ~/.dsh-cloud/provisioned.json, which lives in the persisted home, so a user who
-later removes a default plugin keeps it removed. A failed or interrupted
+later removes a default plugin keeps it removed (a package shipped in the
+image as file:… is installed again when the image carries a new version). A failed or interrupted
 install is reported and retried on the next start; it never blocks dsh.
 
   provision.py npm               before dsh starts: `npm install -g` the MCP
                                  server packages (into ~/.local) so their
-                                 commands exist when dsh connects to them
+                                 commands exist when dsh connects to them, and
+                                 install, update, or reinstall bundles shipped
+                                 in the image (file:), which needs no network:
+                                 dsh then boots with their rows and code (a
+                                 dependency-only change triggers no live reload)
   provision.py bundles HOST PORT after dsh listens: `dsh plugin add` and select
-                                 each bundle; the web profile's live reload
-                                 picks it up, and dsh's package-operation lock
-                                 serializes it with installs the user starts
+                                 each registry bundle; the web profile's live
+                                 reload picks up the new selection, and dsh's
+                                 package-operation lock serializes it with
+                                 installs the user starts
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -94,7 +101,44 @@ def install_npm(key: str, spec: str) -> bool:
     return run(["npm", "install", "--global", "--no-fund", "--no-audit", spec], spec, NPM_TIMEOUT_S)
 
 
+def refresh_local(spec: str) -> bool | None:
+    """Bring an installed copy of an image-shipped `file:` package up to the image's version.
+
+    Returns None when the package is not installed yet (a normal install follows),
+    True once the copy matches the image, and False when that failed.
+    """
+    source = Path(spec[len("file:"):])
+    manifest = read_json(source / "package.json", {})
+    name = manifest.get("name")
+    installed = PROFILE / "node_modules" / str(name)
+    if not name or name not in dependencies() or not installed.exists():
+        return None
+    current = read_json(installed / "package.json", {})
+    if current.get("dependencies") != manifest.get("dependencies"):
+        # New dependencies need pnpm: reinstall from scratch.
+        log(f"dependencies of {name} changed; reinstalling")
+        if not run(["dsh", "plugin", "--profile", "web", "remove", name], spec, INSTALL_TIMEOUT_S):
+            return False
+        return None
+    target = installed.resolve()
+    for path in source.rglob("*"):
+        if path.is_dir() or "node_modules" in path.parts:
+            continue
+        destination = target / path.relative_to(source)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # Replace rather than write in place: installed files are hard links into the pnpm store.
+        partial = destination.with_name(destination.name + ".partial")
+        shutil.copyfile(path, partial)
+        os.replace(partial, destination)
+    log(f"updated {name} to {manifest.get('version')}")
+    return True
+
+
 def install_bundle(key: str, spec: str) -> bool:
+    if spec.startswith("file:"):
+        refreshed = refresh_local(spec)
+        if refreshed is not None:
+            return refreshed
     before = dependencies()
     log(f"installing {spec} ({key})")
     if not run(["dsh", "plugin", "--profile", "web", "add", spec], spec, INSTALL_TIMEOUT_S):
@@ -113,6 +157,19 @@ def install_bundle(key: str, spec: str) -> bool:
     return True
 
 
+def revision(spec: str) -> str:
+    """What the provisioning record stores for `spec`.
+
+    A local `file:` package (shipped in the image) also records its version,
+    so a newer image's copy is installed over the old one at the next start.
+    """
+    if spec.startswith("file:"):
+        version = read_json(Path(spec[len("file:"):]) / "package.json", {}).get("version")
+        if version:
+            return f"{spec}#{version}"
+    return spec
+
+
 def wait_for_dsh(host: str, port: int) -> bool:
     deadline = time.monotonic() + READY_TIMEOUT_S
     while time.monotonic() < deadline:
@@ -128,14 +185,20 @@ def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     policy = read_json(POLICY, {})
     record = read_json(RECORD, {"done": {}})
+    bundles = policy.get("bundles", [])
+    local = [b for b in bundles if b["spec"].startswith("file:")]
     if mode == "npm":
+        for bundle in local:
+            if record["done"].get(bundle["key"]) != revision(bundle["spec"]) and install_bundle(bundle["key"], bundle["spec"]):
+                record["done"][bundle["key"]] = revision(bundle["spec"])
+                write_json(RECORD, record)
         entries, prefix, installer = policy.get("npm", []), "npm:", install_npm
     elif mode == "bundles" and len(sys.argv) == 4:
-        entries, prefix, installer = policy.get("bundles", []), "", install_bundle
+        entries, prefix, installer = [b for b in bundles if b not in local], "", install_bundle
     else:
         log("usage: provision.py npm | provision.py bundles HOST PORT")
         return 2
-    pending = [e for e in entries if record["done"].get(prefix + e["key"]) != e["spec"]]
+    pending = [e for e in entries if record["done"].get(prefix + e["key"]) != revision(e["spec"])]
     if not pending:
         return 0
     if mode == "bundles" and not wait_for_dsh(sys.argv[2], int(sys.argv[3])):
@@ -143,7 +206,7 @@ def main() -> int:
         return 1
     for entry in pending:
         if installer(entry["key"], entry["spec"]):
-            record["done"][prefix + entry["key"]] = entry["spec"]
+            record["done"][prefix + entry["key"]] = revision(entry["spec"])
             write_json(RECORD, record)
     return 0
 

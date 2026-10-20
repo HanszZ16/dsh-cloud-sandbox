@@ -272,24 +272,26 @@ E2B 后端把镜像地址当作 template id，不做标签检查，需要自己�
 
 ## 工作空间浏览器：实时查看并接管 agent 的浏览器
 
-每个工作空间有一个常驻的 Chromium，agent 和用户操作的是**同一个浏览器**：agent 通过 Playwright MCP 操作它，用户在 dsh 右侧边栏的「工作空间浏览器」标签里实时看到画面，可以随时点击、输入（包括中文）、切换标签页和跳转，比如替 agent 完成登录。
+每个工作空间有一个常驻的 Chromium，agent 和用户操作的是**同一个浏览器**：agent 通过 Playwright MCP 操作它，用户在 dsh 右侧边栏的「工作空间浏览器」标签里实时看到画面，可以随时点击、输入（包括中文）、切换标签页和跳转，比如替 agent 完成登录。agent 一开始操作浏览器，这个标签就会自动打开（右侧边栏收起时也会展开）。
 
 ```
 沙箱
  ├─ Chromium（首次使用时启动，无界面；用户数据在 ~/.config/dsh-workspace-browser，登录状态随工作空间保存）
  └─ 浏览器中转服务 sandbox-image/base/browser-hub
-      ├─ 127.0.0.1:9223  给 agent：CDP 透传代理，Playwright MCP 以 attach 模式连接；经过这里才能显示"Agent 正在操作"
+      ├─ 127.0.0.1:9223  给 agent：CDP 透传代理，playwright-mcp --cdp-endpoint 连到这里；经过这里才能显示"Agent 正在操作"
       └─ :3081           给用户：画面帧、标签页、输入的小协议（不暴露原始 CDP）
 网关  /u/<用户>/_dsh-cloud/browser  →  :3081（只允许该用户本人）
-dsh   右侧边栏插件 dsh-cloud-workspace-browser：画面 + 地址栏 + 前进/后退/刷新 + 标签页 + 状态
+dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName browser，工具名 mcp__browser__*）+ 右侧边栏插件（画面、地址栏、前进/后退/刷新、标签页、状态，agent 开始操作时自动打开）
 ```
 
-**启用：** 管理后台 **插件与 MCP → 添加工作空间浏览器**（模板会填好 spec `file:/usr/local/lib/dsh-cloud/workspace-browser`），再分配给用户组或用户。它是一个 dsh 组合包，第一次启动时会在后台安装 `dsh-browser-use` 和 `dsh-experimental-browser-use-playwright-mcp`（需要能访问 npm，见 `SANDBOX_HTTP_PROXY`），并挂载三行配置：浏览器服务、attach 到中转服务的 Playwright MCP、右侧边栏插件。安装完成后，在 dsh 右侧边栏的引导页点 **工作空间浏览器**（英文界面显示 Workspace browser）；新开的会话里 agent 会有 `mcp__playwright-mcp__*` 工具。
+**启用：** 管理后台 **插件与 MCP → 添加工作空间浏览器**（模板会填好 spec `file:/usr/local/lib/dsh-cloud/workspace-browser`），再分配给用户组或用户。它是一个 dsh 组合包，和 `@playwright/mcp`（0.0.80）一起装在镜像里，安装不需要联网，在 dsh 启动前完成；它挂载两行配置：连接中转服务的 Playwright MCP、右侧边栏插件。分配后重启工作空间即可：agent 在所有会话里都有 `mcp__browser__*` 工具；也可以在右侧边栏引导页手动点 **工作空间浏览器**（英文界面显示 Workspace browser）。
 
 **说明：**
 
 - 实现方式是 Chrome DevTools 协议的页面画面推送（`Page.startScreencast`）加输入转发，不需要虚拟显示器；看到的是网页内容，浏览器自身的界面（地址栏、标签栏）由插件自己画。网页弹出的 alert/confirm/prompt 会显示在面板里。
-- 同一时刻只有一个 dsh 会话能占用这个浏览器（Playwright MCP attach 模式的限制）：后开的会话没有浏览器工具，直到前一个会话结束。
+- Playwright MCP 作为普通 MCP 挂载，**所有会话共用同一个浏览器和同一组工具**。没有使用 dsh 的实验性浏览器插件（`dsh-experimental-browser-use-playwright-mcp`），因为它的 attach 模式同一时刻只允许一个会话占用浏览器，后开的会话会拿不到浏览器工具。
+- 工具结果不带截图（`--image-responses omit`），因为默认的 DeepSeek 模型读文字；页面结构仍以文字快照返回。换用能看图的模型时可以去掉这个参数。
+- 镜像里的插件升级（版本号变化）会在用户下次启动工作空间时自动更新到新版，在 dsh 启动前完成。
 - 你和 agent 可以同时操作；面板只提示"Agent 正在操作"，不会阻止 agent。
 - 右侧边栏插件直接以 dsh 客户端模块格式编写（`workspace-browser/client.js`），使用 dsh 预览阶段的右侧边栏接口（`sidebarRightTabs`、`sidebar.right.pane.tab` 插槽），升级 dsh 后需要回归。
 - dsh 自带的 `ui-sidebar-browser`（右侧边栏 Browser）是另一回事：它在用户自己的浏览器里用 iframe 打开网页，和 agent 无关，打开 `localhost` 指向用户自己的电脑；可以用配置补丁 `- id: ui-sidebar-browser` / `disabled: false` 另外开启，用来在对话旁边看文档。

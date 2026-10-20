@@ -125,7 +125,8 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
         if record is None or record.handle.browser_url is None:
             await websocket.close(code=4404)
             return
-        uri = "ws" + record.handle.browser_url.removeprefix("http") + "/"
+        query = f"?{websocket.url.query}" if websocket.url.query else ""
+        uri = "ws" + record.handle.browser_url.removeprefix("http") + "/" + query
         await relay_websocket(websocket, record, uri)
 
     @app.websocket("/u/{user_id}/{path:path}")

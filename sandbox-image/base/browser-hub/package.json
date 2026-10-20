@@ -2,8 +2,9 @@
   "name": "dsh-cloud-browser-hub",
   "private": true,
   "type": "module",
-  "description": "Workspace browser hub: one Chromium shared by the agent (CDP) and the user (live view).",
+  "description": "Workspace browser hub (one Chromium shared by the agent and the user) and the Playwright MCP server the agent drives it with.",
   "dependencies": {
+    "@playwright/mcp": "0.0.80",
     "ws": "8.22.0"
   }
 }

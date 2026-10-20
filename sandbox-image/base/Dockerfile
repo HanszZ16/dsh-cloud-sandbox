@@ -37,14 +37,13 @@ RUN npm config set fetch-retries 5 \
 
 COPY browser-hub/package.json /usr/local/lib/dsh-cloud/browser-hub/package.json
 RUN cd /usr/local/lib/dsh-cloud/browser-hub \
- && npm install --omit=dev --no-fund --no-audit \
+ && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --omit=dev --no-fund --no-audit \
  && npm cache clean --force
 COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
-# The workspace browser dsh bundle; admins provision it to groups with the
-# spec file:/usr/local/lib/dsh-cloud/workspace-browser. Its dsh packages are
-# pinned to this image's dsh version.
+# The workspace browser dsh bundle (live-view tab + the Playwright MCP row);
+# admins provision it to groups with the spec
+# file:/usr/local/lib/dsh-cloud/workspace-browser.
 COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
-RUN sed -i "s/__DSH_VERSION__/${DSH_VERSION}/g" /usr/local/lib/dsh-cloud/workspace-browser/package.json
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
 COPY provision.py /usr/local/lib/dsh-cloud/provision.py
 # The pnpm content store lives outside /home/agent: installed plugins are
