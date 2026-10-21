@@ -16,6 +16,13 @@ const TEMPLATES: Record<string, Omit<Plugin, 'id'>> = {
     description: 'Agent 通过 Playwright MCP 操作工作空间里的 Chromium；用户在右侧边栏实时查看并接管',
     config: { spec: 'file:/usr/local/lib/dsh-cloud/workspace-browser' },
   },
+  'rag-kb': {
+    key: 'rag-kb',
+    kind: 'bundle',
+    name: '知识库',
+    description: '本地知识库（@puwenhui/dsh-rag-kb）：在对话里添加文档，向量与关键词混合检索并标注出处；插件和中文向量模型都在镜像里',
+    config: { spec: 'link:/usr/local/lib/dsh-cloud/plugins/rag-kb' },
+  },
 }
 const KIND_HELP: Record<PluginKind, string> = {
   bundle: '首次启动时用 dsh plugin add 装进用户的 profile 并启用，只装一次；之后用户可以自己删除。',
@@ -55,17 +62,20 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
           <p>在这里维护插件目录，再到「用户组」或「用户」里分配。用户自己在 dsh 里装的插件不受影响，会随数据一起保留。</p>
         </div>
         <div className="row">
-          {data.some((p) => p.key === 'workspace-browser') ? null : (
-            <button
-              className="btn outline"
-              onClick={() => {
-                setTemplate(TEMPLATES['workspace-browser'])
-                setEditing('new')
-              }}
-            >
-              添加工作空间浏览器
-            </button>
-          )}
+          {Object.values(TEMPLATES)
+            .filter((t) => !data.some((p) => p.key === t.key))
+            .map((t) => (
+              <button
+                key={t.key}
+                className="btn outline"
+                onClick={() => {
+                  setTemplate(t)
+                  setEditing('new')
+                }}
+              >
+                添加{t.name}
+              </button>
+            ))}
           <button
             className="btn primary"
             onClick={() => {

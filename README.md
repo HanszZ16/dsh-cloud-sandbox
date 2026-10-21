@@ -25,6 +25,7 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Admin console](#admin-console)
 - [Images: different software per group](#images-different-software-per-group)
 - [Workspace browser: watch and take over the agent's browser](#workspace-browser-watch-and-take-over-the-agents-browser)
+- [Knowledge base (RAG)](#knowledge-base-rag)
 - [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
 - [Where user data lives](#where-user-data-lives)
 - [Sandbox lifecycle](#sandbox-lifecycle)
@@ -89,6 +90,7 @@ dsh-cloud-sandbox/
 │   │   ├── entrypoint.sh          Install MCP packages → start the browser hub and dsh (with the admin overlay) → install default plugins in the background; forwards stop signals to both
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
 │   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Workspace browser"
+│   │   ├── plugins/rag-kb/        Manifest of the knowledge base plugin shipped in the image (links the shared model)
 │   │   └── provision.py           Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
 │   └── variants/
 │       └── data-science/Dockerfile Example team image: the base plus numpy, pandas, scipy, matplotlib, scikit-learn
@@ -159,7 +161,9 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.1-rc.2`). The base image is about 2 GB (mostly Chromium and LibreOffice); a team image adds only what it installs.
+To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.1-rc.2`). The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
+
+The base image also carries the knowledge base plugin and its Chinese embedding model, which is downloaded from Hugging Face during the build. Where huggingface.co is unreachable, add `--build-arg HF_ENDPOINT=https://hf-mirror.com`; where the npm registry is unreliable, `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` applies to the plugins installed into the image.
 
 ### 3. Build the web UI
 
@@ -299,6 +303,30 @@ dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName br
 - The right-sidebar plugin is written directly in dsh's client module format (`workspace-browser/client.js`) and uses dsh's pre-stable right-sidebar contract (`sidebarRightTabs`, the `sidebar.right.pane.tab` slot); re-verify after upgrading dsh.
 - dsh's built-in `ui-sidebar-browser` (the right-sidebar Browser) is something else: it opens pages in an iframe in the user's own browser, is unrelated to the agent, and `localhost` there means the user's own computer. It can be enabled separately with the config patch `- id: ui-sidebar-browser` / `disabled: false`, for reading pages beside the conversation.
 
+## Knowledge base (RAG)
+
+The image ships the third-party plugin [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb) (0.3.1, MIT). Users add documents (PDF, DOCX, Markdown, TXT, CSV, JSON) or conversation content in plain words ("add ~/docs/handbook.pdf to the knowledge base", "save this to the knowledge base"), and the agent answers from them through hybrid vector and keyword retrieval (`knowledge_search`), citing the source paragraphs. Embeddings are computed locally on the CPU with `bge-small-zh-v1.5`; documents never leave the workspace.
+
+**Enabling it:** in the admin console, **Plugins & MCP → 添加知识库 (add knowledge base)** (the template fills in the spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`), assign it to groups or users, and restart their workspaces.
+
+**How it is shipped:**
+
+| Part | Location | Per-user cost |
+|---|---|---|
+| Plugin and its dependencies (about 370 MB, mostly onnxruntime) | Image: `/usr/local/lib/dsh-cloud/plugins/rag-kb`; the user's profile holds only a symlink (`link:`) | None; upgraded with the image |
+| Embedding model (95 MB, pinned revision, checksum verified at build) | Image: `/usr/local/share/dsh-cloud/models/Xenova/bge-small-zh-v1.5`; the plugin looks in `~/.dsh/rag-kb/hf-cache`, which provision links to the image copy before dsh starts | None |
+| Knowledge base index | `~/.dsh/rag-kb/index.db` | The user's data, saved with the workspace (KB to MB) |
+
+Verified in a workspace: adding a document through conversation, answering a reworded question in a new session with citations, and both again after sleep and resume, with no download at any point.
+
+**Limits:**
+
+- **Memory:** with the model loaded, dsh grows from about 230 MB to about 580 MB, because the plugin loads the model twice (once for queries, once for indexing). Keep the reranker off (it downloads another model of about 1 GB at first use), and give groups that also use the workspace browser 3 GB.
+- **No management UI yet:** the plugin's own page (Settings → Plugins → 知识库) only holds settings: description, watched directory, and retrieval parameters. Documents are added, listed, and removed through conversation; files reach the workspace as chat attachments or through the agent.
+- The plugin reads files with Node's `fs` directly, bypassing dsh's file permission checks; acceptable because every user has a container of their own.
+- Third-party code from one author, first published on 2026-10-08. The version is pinned (`RAG_KB_VERSION`); review the code before raising it.
+- The settings page text is Chinese only.
+
 ## Provisioning plugins, MCP servers, and config patches
 
 Administrators register three kinds of entries in the catalog. Before a sandbox starts, the gateway writes them into two files inside it (owned by root, read-only):
@@ -316,6 +344,7 @@ Notes:
 - **Default plugins install in the background**: sign-in does not wait for them. During an install dsh holds the profile lock, so saving plugin or settings changes in dsh fails until it finishes (account settings mentions this). Large plugins (for example the Codex subagent with its native binary) can take a few minutes the first time. A failed or interrupted install is retried on the next start.
 - **Do not run MCP servers through `npx`**: for a stdio MCP server, dsh starts a probe process and then the serving process, so two concurrent `npx` installs corrupt the npx cache, and the corrupted cache is saved with the user's data. Use the "install package" field and set the command to the executable it provides (for example `@modelcontextprotocol/server-memory@2026.7.4` and `mcp-server-memory`), or install the server in the image.
 - **MCP env and headers are readable by the user**: they are written into the overlay inside the sandbox, and a stdio MCP process runs in the user's sandbox, so do not put secrets there that users must not see. Services that need secrets should be proxied by the gateway (see the to-dos).
+- **Plugins shipped in the image** use one of two specs, and both install before dsh starts without network: `file:<dir>` copies the package into the user's profile (fine for small packages such as the workspace browser), and `link:<dir>` leaves only a symlink to the image directory (for plugins with large dependencies). A `dsh-cloud.json` with `sharedCaches` in a `link:` plugin's directory makes provision link those paths under the home to image directories on every start.
 - npm packages and plugins installed on first entry go out through `SANDBOX_HTTP_PROXY` when it is set.
 
 ## Where user data lives
@@ -330,6 +359,7 @@ Notes:
 | Memory (data of an MCP memory server, e.g. `~/.mcp-memory.jsonl`) | Under `/home/agent` | ✅ Same; point MCP data paths under `/home/agent` |
 | User files, projects, global npm packages (`NPM_CONFIG_PREFIX=~/.local`), dotfiles | `/home/agent` | ✅ Same |
 | Provisioning record | `/home/agent/.dsh-cloud/provisioned.json` | ✅ Same |
+| Knowledge base index | `/home/agent/.dsh/rag-kb/index.db` | ✅ Same; the plugin and model come from the image |
 | System directories (`/usr`, `/tmp`, apt software, the pnpm content store `/var/cache/pnpm-store`) | The image the group chose | ❌ Back to the image's state on every start; put needed system software in an image (see [Images](#images-different-software-per-group)) |
 | Snapshot files | Gateway `gateway/state/<username>/home.tar` | ✅ Written atomically (`.partial`, then rename) |
 | Accounts, groups, plugin catalog, sessions, usage, audit | Gateway `gateway/data/gateway.db` (SQLite) | ✅ |

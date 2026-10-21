@@ -1,0 +1,5 @@
+{
+  "sharedCaches": {
+    ".dsh/rag-kb/hf-cache/Xenova/bge-small-zh-v1.5": "/usr/local/share/dsh-cloud/models/Xenova/bge-small-zh-v1.5"
+  }
+}

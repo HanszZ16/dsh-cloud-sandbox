@@ -25,6 +25,7 @@ dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek
 - [管理后台](#管理后台)
 - [镜像：按用户组提供不同的软件](#镜像按用户组提供不同的软件)
 - [工作空间浏览器：实时查看并接管 agent 的浏览器](#工作空间浏览器实时查看并接管-agent-的浏览器)
+- [知识库（RAG）](#知识库rag)
 - [插件、MCP 与配置补丁的下发](#插件mcp-与配置补丁的下发)
 - [用户数据存在哪里](#用户数据存在哪里)
 - [沙箱生命周期](#沙箱生命周期)
@@ -88,6 +89,7 @@ dsh-cloud-sandbox/
 │   │   ├── entrypoint.sh          安装 MCP 包 → 启动浏览器中转服务和 dsh（带管理员 overlay）→ 后台安装默认插件；停止时把信号转给两者
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
 │   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「工作空间浏览器」
+│   │   ├── plugins/rag-kb/        镜像自带的知识库插件的清单（链接共享的模型）
 │   │   └── provision.py           按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
 │   └── variants/
 │       └── data-science/Dockerfile 示例团队镜像：基础镜像 + numpy、pandas、scipy、matplotlib、scikit-learn
@@ -158,7 +160,9 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.1-rc.2`。基础镜像约 2 GB（Chromium 和 LibreOffice 占了大部分），团队镜像只多出它额外安装的部分。
+要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.1-rc.2`。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
+
+基础镜像还自带知识库插件和中文向量模型，模型在构建时从 Hugging Face 下载。访问不了 huggingface.co 时，加 `--build-arg HF_ENDPOINT=https://hf-mirror.com`；npm 官方源不稳定时，加 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com`（只用于装进镜像的插件）。
 
 ### 3. 构建前端
 
@@ -298,6 +302,30 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 - 右侧边栏插件直接以 dsh 客户端模块格式编写（`workspace-browser/client.js`），使用 dsh 预览阶段的右侧边栏接口（`sidebarRightTabs`、`sidebar.right.pane.tab` 插槽），升级 dsh 后需要回归。
 - dsh 自带的 `ui-sidebar-browser`（右侧边栏 Browser）是另一回事：它在用户自己的浏览器里用 iframe 打开网页，和 agent 无关，打开 `localhost` 指向用户自己的电脑；可以用配置补丁 `- id: ui-sidebar-browser` / `disabled: false` 另外开启，用来在对话旁边看文档。
 
+## 知识库（RAG）
+
+镜像里自带第三方插件 [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb)（0.3.1，MIT 许可）。用户直接用大白话添加文档（PDF、DOCX、Markdown、TXT、CSV、JSON）或对话内容（"把 ~/docs/手册.pdf 加进知识库""把刚才的结论存到知识库"），agent 通过向量 + 关键词混合检索（`knowledge_search`）回答，并标注引用的段落。向量在本地用 CPU 计算，模型是 `bge-small-zh-v1.5`，文档不会离开工作空间。
+
+**开启方法：** 管理后台 **插件与 MCP → 添加知识库**（模板会填好 spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`），分配给用户组或用户，再重启他们的工作空间。
+
+**部署方式：**
+
+| 部分 | 位置 | 每个用户的开销 |
+|---|---|---|
+| 插件和依赖（约 370 MB，主要是 onnxruntime） | 镜像 `/usr/local/lib/dsh-cloud/plugins/rag-kb`；用户的 profile 里只有一个符号链接（`link:`） | 无；随镜像升级 |
+| 向量模型（95 MB，构建时固定版本并校验 sha256） | 镜像 `/usr/local/share/dsh-cloud/models/Xenova/bge-small-zh-v1.5`；插件在 `~/.dsh/rag-kb/hf-cache` 里找模型，provision 在 dsh 启动前把它链接到镜像里的那份 | 无 |
+| 知识库索引 | `~/.dsh/rag-kb/index.db` | 用户数据，随工作空间保存（几 KB 到几 MB） |
+
+已在工作空间里验证：通过对话添加文档；在新会话里换一种说法提问，能答对并标注出处；休眠恢复后再测一遍同样正常；全程没有任何下载。
+
+**限制：**
+
+- **内存：** 模型加载后 dsh 从约 230 MB 涨到约 580 MB，因为插件加载了两份模型（检索一份、建索引一份）。reranker 保持关闭（首次使用会再下载约 1 GB 的模型）；同时使用工作空间浏览器的用户组建议给 3 GB。
+- **还没有管理界面：** 插件自带的页面（设置 → 插件 → 知识库）只有配置项：描述、监视目录、检索参数。添加、查看、删除文档都要在对话里说；文件可以通过聊天附件或让 agent 下载放进工作空间。
+- 插件直接用 Node 的 `fs` 读文件，不经过 dsh 的文件权限检查；每个用户独占一个容器，所以可以接受。
+- 第三方代码，单个作者，2026-10-08 首次发布。版本已固定（`RAG_KB_VERSION`），升级前请先审查代码。
+- 设置页只有中文。
+
 ## 插件、MCP 与配置补丁的下发
 
 管理员在目录里登记三种类型，网关在启动沙箱前把它们写成两个文件放进沙箱（root 所有、只读）：
@@ -315,6 +343,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 - **默认插件在后台安装**：登录不会等插件装完。安装期间 dsh 持有 profile 锁，用户这段时间在 dsh 里保存插件或设置会提示失败，装完后恢复（账号设置里有说明）。插件很大时（例如 Codex 子代理带原生二进制）首次安装可能需要几分钟。安装失败或被打断，下次启动自动重试。
 - **MCP 服务不要用 `npx`**：dsh 连接 stdio MCP 时会先启动一个探测进程再启动正式进程，两个 `npx` 同时安装会损坏 npx 缓存，并且这个损坏的缓存会随用户数据保存下来。请填写"安装包"，command 写安装包提供的命令名（例如 `@modelcontextprotocol/server-memory@2026.7.4` + `mcp-server-memory`），或者把 MCP 服务直接装进镜像。
 - **MCP 的 env 和 headers 用户可读**：它们写在沙箱里的 overlay 文件中，stdio MCP 进程本身也运行在用户沙箱里，所以不要在这里放不希望用户看到的密钥。需要保密的服务，应由网关代理（见待办）。
+- **镜像自带的插件**有两种 spec，都在 dsh 启动前安装、不需要网络：`file:<目录>` 把包复制进用户的 profile（适合工作空间浏览器这样的小包）；`link:<目录>` 只在 profile 里放一个指向镜像目录的符号链接（适合依赖很大的插件）。`link:` 插件目录里的 `dsh-cloud.json` 可以用 `sharedCaches` 声明缓存目录，provision 每次启动都会把用户目录下的这些路径链接到镜像里的目录。
 - 首次进入沙箱需要安装的 npm 包和插件都通过 `SANDBOX_HTTP_PROXY` 出网（如果配置了）。
 
 ## 用户数据存在哪里
@@ -329,6 +358,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | 记忆（MCP 记忆服务的数据，例如 `~/.mcp-memory.jsonl`） | `/home/agent` 下 | ✅ 同上；配置 MCP 时请把数据路径放在 `/home/agent` 下 |
 | 用户文件、项目、npm 全局包（`NPM_CONFIG_PREFIX=~/.local`）、dotfiles | `/home/agent` | ✅ 同上 |
 | 已下发记录 | `/home/agent/.dsh-cloud/provisioned.json` | ✅ 同上 |
+| 知识库索引 | `/home/agent/.dsh/rag-kb/index.db` | ✅ 同上；插件和模型来自镜像 |
 | 系统目录（`/usr`、`/tmp`、apt 软件、pnpm 内容缓存 `/var/cache/pnpm-store`） | 用户组选择的镜像 | ❌ 每次启动回到镜像初始状态；需要的系统软件请放进镜像（见[镜像](#镜像按用户组提供不同的软件)） |
 | 快照文件 | 网关 `gateway/state/<用户名>/home.tar` | ✅ 原子写入（先写 `.partial` 再替换） |
 | 账号、用户组、插件目录、会话、用量、审计 | 网关 `gateway/data/gateway.db`（SQLite） | ✅ |

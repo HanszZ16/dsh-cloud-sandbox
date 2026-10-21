@@ -120,3 +120,31 @@ async def test_restart_saves_then_starts_with_the_new_policy(settings, tmp_path)
     (spec,) = backend.live.values()
     assert spec.files == newer.files
     assert spec.restore == {"home": b"state-of-alice"}
+
+
+def test_snapshots_are_re_rooted_so_docker_extracts_them_at_the_root():
+    import io
+    import tarfile
+
+    from dsh_gateway.backends.docker_backend import rooted
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        archive.addfile(tarfile.TarInfo("agent"), None)
+        archive.getmember("agent").type = tarfile.DIRTYPE
+        data = tarfile.TarInfo("agent/notes.md")
+        data.size = 5
+        archive.addfile(data, io.BytesIO(b"hello"))
+        link = tarfile.TarInfo("agent/plugin")
+        link.type, link.linkname = tarfile.SYMTYPE, "../../usr/local/lib/plugin"
+        archive.addfile(link)
+        hard = tarfile.TarInfo("agent/notes-copy.md")
+        hard.type, hard.linkname = tarfile.LNKTYPE, "agent/notes.md"
+        archive.addfile(hard)
+
+    with tarfile.open(fileobj=io.BytesIO(rooted(buffer.getvalue(), "/home"))) as result:
+        members = {m.name: m for m in result.getmembers()}
+        assert set(members) == {"home/agent", "home/agent/notes.md", "home/agent/plugin", "home/agent/notes-copy.md"}
+        assert result.extractfile("home/agent/notes.md").read() == b"hello"
+        assert members["home/agent/plugin"].linkname == "../../usr/local/lib/plugin"
+        assert members["home/agent/notes-copy.md"].linkname == "home/agent/notes.md"

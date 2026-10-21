@@ -4,14 +4,16 @@ Reads /etc/dsh-cloud/policy.json, written by the gateway before the sandbox
 starts. Every entry is applied once per user: applied keys are recorded in
 ~/.dsh-cloud/provisioned.json, which lives in the persisted home, so a user who
 later removes a default plugin keeps it removed (a package shipped in the
-image as file:… is installed again when the image carries a new version). A failed or interrupted
+image as file:… is installed again when the image carries a new version; one
+shipped as link:… is a symlink into the image and follows it by itself). A failed or interrupted
 install is reported and retried on the next start; it never blocks dsh.
 
   provision.py npm               before dsh starts: `npm install -g` the MCP
                                  server packages (into ~/.local) so their
                                  commands exist when dsh connects to them, and
                                  install, update, or reinstall bundles shipped
-                                 in the image (file:), which needs no network:
+                                 in the image (file:, link:), which needs no
+                                 network, and link the caches they share:
                                  dsh then boots with their rows and code (a
                                  dependency-only change triggers no live reload)
   provision.py bundles HOST PORT after dsh listens: `dsh plugin add` and select
@@ -134,11 +136,44 @@ def refresh_local(spec: str) -> bool | None:
     return True
 
 
+def link_shared_caches(spec: str) -> None:
+    """Point the caches an image-shipped package declares at the image's copies.
+
+    The package directory's dsh-cloud.json maps paths under the home (where the
+    plugin looks) to directories in the image. A copy the user downloaded
+    earlier is replaced: it holds the same files the image provides.
+    """
+    manifest = read_json(Path(spec.split(":", 1)[1]) / "dsh-cloud.json", {})
+    for relative, target in manifest.get("sharedCaches", {}).items():
+        path = HOME / relative
+        if path.is_symlink():
+            if os.readlink(path) == target:
+                continue
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(target)
+        log(f"linked {path} to {target}")
+
+
+def is_linked(spec: str) -> bool:
+    """Whether the profile already loads the package at this link: spec's directory."""
+    source = Path(spec[len("link:"):])
+    name = read_json(source / "package.json", {}).get("name")
+    installed = PROFILE / "node_modules" / str(name)
+    return bool(name) and name in dependencies() and installed.is_symlink() and installed.resolve() == source.resolve()
+
+
 def install_bundle(key: str, spec: str) -> bool:
     if spec.startswith("file:"):
         refreshed = refresh_local(spec)
         if refreshed is not None:
             return refreshed
+    if spec.startswith("link:") and is_linked(spec):
+        return True
     before = dependencies()
     log(f"installing {spec} ({key})")
     if not run(["dsh", "plugin", "--profile", "web", "add", spec], spec, INSTALL_TIMEOUT_S):
@@ -186,8 +221,11 @@ def main() -> int:
     policy = read_json(POLICY, {})
     record = read_json(RECORD, {"done": {}})
     bundles = policy.get("bundles", [])
-    local = [b for b in bundles if b["spec"].startswith("file:")]
+    local = [b for b in bundles if b["spec"].startswith(("file:", "link:"))]
     if mode == "npm":
+        for bundle in local:
+            if bundle["spec"].startswith("link:"):
+                link_shared_caches(bundle["spec"])
         for bundle in local:
             if record["done"].get(bundle["key"]) != revision(bundle["spec"]) and install_bundle(bundle["key"], bundle["spec"]):
                 record["done"][bundle["key"]] = revision(bundle["spec"])

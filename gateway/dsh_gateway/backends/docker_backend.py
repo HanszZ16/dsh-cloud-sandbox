@@ -9,8 +9,10 @@ never copied while being written.
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import secrets
+import tarfile
 import time
 
 import docker
@@ -25,6 +27,25 @@ _LABEL_INSTANCE = "dsh-cloud.instance"
 _LAUNCH_LINE = re.compile(r"dsh web: (https?://\S+\?token=\S+)")
 # Per archive name: (captured directory, parent it is extracted into).
 _PARTS = {"home": ("/home/agent", "/home")}
+
+
+def rooted(archive: bytes, parent: str) -> bytes:
+    """Re-root an archive captured from a directory under `parent` so it extracts at /.
+
+    Docker refuses a relative symlink that points outside the directory it
+    extracts into (pnpm links image-shipped plugins as
+    ../../…/usr/local/lib/…), and refuses the whole archive with it, so
+    snapshots are extracted at / with their members renamed under `parent`.
+    """
+    prefix = parent.strip("/") + "/"
+    source, result = io.BytesIO(archive), io.BytesIO()
+    with tarfile.open(fileobj=source, mode="r|") as reader, tarfile.open(fileobj=result, mode="w|", format=tarfile.PAX_FORMAT) as writer:
+        for member in reader:
+            member.name = prefix + member.name
+            if member.islnk():
+                member.linkname = prefix + member.linkname
+            writer.addfile(member, reader.extractfile(member) if member.isreg() else None)
+    return result.getvalue()
 
 
 class DockerBackend(SandboxBackend):
@@ -43,7 +64,7 @@ class DockerBackend(SandboxBackend):
             progress("restore")
             for part, data in spec.restore.items():
                 _, parent = _PARTS[part]
-                await asyncio.to_thread(container.put_archive, parent, data)
+                await asyncio.to_thread(container.put_archive, "/", await asyncio.to_thread(rooted, data, parent))
             if spec.files:
                 await asyncio.to_thread(container.put_archive, "/", files_archive(spec.files))
             progress("boot")
