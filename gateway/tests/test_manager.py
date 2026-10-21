@@ -129,7 +129,9 @@ def test_snapshots_are_re_rooted_so_docker_extracts_them_at_the_root():
     from dsh_gateway.backends.docker_backend import rooted
 
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w") as archive:
+    long_name = "agent/" + "d" * 120 + ".md"
+    # PAX, like Docker's archives: non-ASCII and long names travel in path headers.
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
         archive.addfile(tarfile.TarInfo("agent"), None)
         archive.getmember("agent").type = tarfile.DIRTYPE
         data = tarfile.TarInfo("agent/notes.md")
@@ -141,10 +143,19 @@ def test_snapshots_are_re_rooted_so_docker_extracts_them_at_the_root():
         hard = tarfile.TarInfo("agent/notes-copy.md")
         hard.type, hard.linkname = tarfile.LNKTYPE, "agent/notes.md"
         archive.addfile(hard)
+        for name in ("agent/报销制度.md", long_name):
+            archive.addfile(tarfile.TarInfo(name), io.BytesIO(b""))
+        chinese_link = tarfile.TarInfo("agent/手册")
+        chinese_link.type, chinese_link.linkname = tarfile.SYMTYPE, "knowledge/报销制度.md"
+        archive.addfile(chinese_link)
 
     with tarfile.open(fileobj=io.BytesIO(rooted(buffer.getvalue(), "/home"))) as result:
         members = {m.name: m for m in result.getmembers()}
-        assert set(members) == {"home/agent", "home/agent/notes.md", "home/agent/plugin", "home/agent/notes-copy.md"}
+        assert set(members) == {
+            "home/agent", "home/agent/notes.md", "home/agent/plugin", "home/agent/notes-copy.md",
+            "home/agent/报销制度.md", "home/" + long_name, "home/agent/手册",
+        }
         assert result.extractfile("home/agent/notes.md").read() == b"hello"
         assert members["home/agent/plugin"].linkname == "../../usr/local/lib/plugin"
         assert members["home/agent/notes-copy.md"].linkname == "home/agent/notes.md"
+        assert members["home/agent/手册"].linkname == "knowledge/报销制度.md"

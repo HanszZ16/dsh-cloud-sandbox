@@ -41,6 +41,9 @@ def rooted(archive: bytes, parent: str) -> bytes:
     source, result = io.BytesIO(archive), io.BytesIO()
     with tarfile.open(fileobj=source, mode="r|") as reader, tarfile.open(fileobj=result, mode="w|", format=tarfile.PAX_FORMAT) as writer:
         for member in reader:
+            # tarfile writes a member's PAX path headers over its attributes; drop
+            # them so the renamed fields are written (non-ASCII and long names).
+            member.pax_headers = {k: v for k, v in member.pax_headers.items() if k not in ("path", "linkpath")}
             member.name = prefix + member.name
             if member.islnk():
                 member.linkname = prefix + member.linkname
