@@ -37,8 +37,8 @@ agent 在所有会话里都有浏览器工具，工具名为 `mcp__browser__*`�
 
 ## 管理员怎么开启
 
-1. 管理后台 → **插件与 MCP** → **添加工作空间浏览器**。模板会填好：类型「dsh 插件」，spec `file:/usr/local/lib/dsh-cloud/workspace-browser`。
-2. 在同一个表单里勾选要开启的**用户组**（或者之后在「用户」里单独分配给某个人）。没有分配的条目在列表里会标红"未分配，不会生效"。
+1. 这是内置插件：网关在创建或升级数据库时，会把它登记到 **插件与 MCP**（类型「dsh 插件」，spec `file:/usr/local/lib/dsh-cloud/workspace-browser`）并分配给默认用户组。管理员删掉的条目不会再加回来。
+2. 要调整谁能用，编辑这个条目，勾选要开启的**用户组**（或者之后在「用户」里单独分配给某个人）。没有分配的条目在列表里会标红"未分配，不会生效"。
 3. 保存后按提示**立即重启**受影响的工作空间，或者等用户下次登录。
 
 前提：工作空间镜像基于本项目的基础镜像（`sandbox-image/base`），里面已经有 Chromium、浏览器中转服务、`@playwright/mcp` 和这个插件，**开启时不需要联网**。网关需要是包含本功能的版本（转发路由和 3081 端口）。
@@ -199,5 +199,5 @@ gateway/dsh_gateway/
 ├── app.py                        /u/<用户>/_dsh-cloud/browser 路由
 ├── proxy.py                      relay_websocket
 └── backends/docker_backend.py    发布 3081 端口
-web/src/pages/admin/Plugins.tsx   「添加工作空间浏览器」模板、分配给用户组
+gateway/dsh_gateway/db.py         内置插件条目（BUILTIN_PLUGINS）、分配给默认用户组
 ```

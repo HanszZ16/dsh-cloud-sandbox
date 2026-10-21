@@ -291,7 +291,7 @@ Gateway  /u/<user>/_dsh-cloud/browser  →  :3081 (that user only)
 dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName browser, tools mcp__browser__*) + a right-sidebar plugin (live view, address bar, back/forward/reload, tabs, status; opens when the agent starts operating)
 ```
 
-**Enabling it:** in the admin console, **Plugins & MCP → 添加工作空间浏览器 (add workspace browser)** (the template fills in the spec `file:/usr/local/lib/dsh-cloud/workspace-browser`), then assign it to groups or users. It is a dsh bundle shipped in the image together with `@playwright/mcp` (0.0.80), so installing it needs no network and happens before dsh starts. It mounts two rows: Playwright MCP connected to the hub, and the right-sidebar plugin. Restart the workspace after assigning it: the agent has the `mcp__browser__*` tools in every session, and **Browser preview** can also be opened by hand from the right sidebar's guide page.
+**Enabling it:** it is a built-in plugin: the gateway registers it in **Plugins & MCP** (spec `file:/usr/local/lib/dsh-cloud/workspace-browser`) and assigns it to the default group when its database is created or upgraded; assign it to other groups or users there, or unassign it to turn it off. It is a dsh bundle shipped in the image together with `@playwright/mcp` (0.0.80), so installing it needs no network and happens before dsh starts. It mounts two rows: Playwright MCP connected to the hub, and the right-sidebar plugin. Restart the workspace after assigning it: the agent has the `mcp__browser__*` tools in every session, and **Browser preview** can also be opened by hand from the right sidebar's guide page.
 
 **Notes:**
 
@@ -307,7 +307,7 @@ dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName br
 
 The image ships the third-party plugin [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb) (0.3.1, MIT). Users add documents (PDF, DOCX, Markdown, TXT, CSV, JSON) or conversation content in plain words ("add ~/docs/handbook.pdf to the knowledge base", "save this to the knowledge base"), and the agent answers from them through hybrid vector and keyword retrieval (`knowledge_search`), citing the source paragraphs. Embeddings are computed locally on the CPU with `bge-small-zh-v1.5`; documents never leave the workspace.
 
-**Enabling it:** in the admin console, **Plugins & MCP → 添加知识库 (add knowledge base)** (the template fills in the spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`), assign it to groups or users, and restart their workspaces.
+**Enabling it:** it is a built-in plugin: the gateway registers it in **Plugins & MCP** (spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`) and assigns it to the default group when its database is created or upgraded. Assign it to other groups or users there, or unassign it to turn it off; restart the affected workspaces either way. The gateway registers the built-in plugins once: an entry an admin deleted is not added back, and an entry an admin registered earlier under the same key (`workspace-browser`, `rag-kb`) is kept as it is.
 
 **How it is shipped:**
 

@@ -7,23 +7,6 @@ import { RestartHint, RestartPrompt, runningAffected } from './RestartPrompt.tsx
 
 const KIND_LABEL: Record<PluginKind, string> = { bundle: 'dsh 插件', mcp: 'MCP 服务', patch: '配置补丁' }
 
-/** Ready-made catalog entries for software shipped in the base image. */
-const TEMPLATES: Record<string, Omit<Plugin, 'id'>> = {
-  'workspace-browser': {
-    key: 'workspace-browser',
-    kind: 'bundle',
-    name: '工作空间浏览器',
-    description: 'Agent 通过 Playwright MCP 操作工作空间里的 Chromium；用户在右侧边栏实时查看并接管',
-    config: { spec: 'file:/usr/local/lib/dsh-cloud/workspace-browser' },
-  },
-  'rag-kb': {
-    key: 'rag-kb',
-    kind: 'bundle',
-    name: '知识库',
-    description: '本地知识库（@puwenhui/dsh-rag-kb）：在对话里添加文档，向量与关键词混合检索并标注出处；插件和中文向量模型都在镜像里',
-    config: { spec: 'link:/usr/local/lib/dsh-cloud/plugins/rag-kb' },
-  },
-}
 const KIND_HELP: Record<PluginKind, string> = {
   bundle: '首次启动时用 dsh plugin add 装进用户的 profile 并启用，只装一次；之后用户可以自己删除。',
   mcp: '每次启动都通过管理员 overlay 注入 dsh-mcp-client，工具以 mcp__<serverName>__<tool> 出现。填写安装包时，会在 dsh 启动前为每个用户 npm install -g 一次（保存在用户目录）。',
@@ -38,7 +21,6 @@ const loadCatalog = async () => {
 export function PluginsSection({ showToast }: { showToast: (m: string) => void }) {
   const { data: catalog, error, reload } = useLoad(loadCatalog)
   const [editing, setEditing] = useState<Plugin | 'new' | null>(null)
-  const [template, setTemplate] = useState<Omit<Plugin, 'id'> | null>(null)
   const [restart, setRestart] = useState<string[]>([])
 
   if (!catalog) return <Loading error={error} />
@@ -62,26 +44,9 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
           <p>在这里维护插件目录，再到「用户组」或「用户」里分配。用户自己在 dsh 里装的插件不受影响，会随数据一起保留。</p>
         </div>
         <div className="row">
-          {Object.values(TEMPLATES)
-            .filter((t) => !data.some((p) => p.key === t.key))
-            .map((t) => (
-              <button
-                key={t.key}
-                className="btn outline"
-                onClick={() => {
-                  setTemplate(t)
-                  setEditing('new')
-                }}
-              >
-                添加{t.name}
-              </button>
-            ))}
           <button
             className="btn primary"
-            onClick={() => {
-              setTemplate(null)
-              setEditing('new')
-            }}
+            onClick={() => setEditing('new')}
           >
             添加
           </button>
@@ -132,7 +97,6 @@ export function PluginsSection({ showToast }: { showToast: (m: string) => void }
       {editing ? (
         <PluginEditor
           plugin={editing === 'new' ? null : editing}
-          template={editing === 'new' ? template : null}
           groups={catalog.groups}
           onClose={() => setEditing(null)}
           onSaved={(message, pluginId, touchedGroups) => {
@@ -192,13 +156,11 @@ function fromLines(text: string, sep: string): Record<string, string> {
 
 function PluginEditor({
   plugin,
-  template,
   groups,
   onClose,
   onSaved,
 }: {
   plugin: Plugin | null
-  template: Omit<Plugin, 'id'> | null
   groups: Group[]
   onClose: () => void
   /** `touchedGroups`: groups whose assignment of this entry changed. */
@@ -206,12 +168,11 @@ function PluginEditor({
 }) {
   const assigned = plugin ? groups.filter((g) => g.plugin_ids.includes(plugin.id)).map((g) => g.id) : []
   const [groupIds, setGroupIds] = useState<number[]>(assigned)
-  const initial = plugin ?? template
-  const [kind, setKind] = useState<PluginKind>(initial?.kind ?? 'bundle')
-  const [key, setKey] = useState(initial?.key ?? '')
-  const [name, setName] = useState(initial?.name ?? '')
-  const [description, setDescription] = useState(initial?.description ?? '')
-  const [spec, setSpec] = useState(initial?.config.spec ?? '')
+  const [kind, setKind] = useState<PluginKind>(plugin?.kind ?? 'bundle')
+  const [key, setKey] = useState(plugin?.key ?? '')
+  const [name, setName] = useState(plugin?.name ?? '')
+  const [description, setDescription] = useState(plugin?.description ?? '')
+  const [spec, setSpec] = useState(plugin?.config.spec ?? '')
   const [yaml, setYaml] = useState(plugin?.config.yaml ?? '- id: \n  disabled: true\n')
   const [serverName, setServerName] = useState(plugin?.config.serverName ?? '')
   const [transport, setTransport] = useState<McpConfig['transport']>(plugin?.config.transport ?? 'stdio')

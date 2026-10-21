@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS groups (
@@ -99,7 +99,29 @@ CREATE TABLE images (
 );
 ALTER TABLE groups ADD COLUMN image_id INTEGER REFERENCES images(id);
 """,
+    # Registers the built-in plugins in existing catalogs; see _seed_builtin_plugins.
+    3: "",
 }
+
+# Plugins shipped in the sandbox image. Every catalog gets them once, when it
+# is created or upgraded to schema 3, assigned to the default group; afterwards
+# they are ordinary catalog rows that admins may edit, unassign, or delete.
+BUILTIN_PLUGINS = (
+    {
+        "key": "workspace-browser",
+        "kind": "bundle",
+        "name": "工作空间浏览器",
+        "description": "Agent 通过 Playwright MCP 操作工作空间里的 Chromium；用户在右侧边栏实时查看并接管",
+        "config": {"spec": "file:/usr/local/lib/dsh-cloud/workspace-browser"},
+    },
+    {
+        "key": "rag-kb",
+        "kind": "bundle",
+        "name": "知识库",
+        "description": "本地知识库：在对话里添加文档，向量与关键词混合检索并标注出处；插件和中文向量模型都在镜像里",
+        "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/rag-kb"},
+    },
+)
 
 GROUP_FIELDS = (
     "name", "description", "mem_limit", "cpus", "idle_timeout_s", "max_lifetime_s",
@@ -147,7 +169,33 @@ class Database:
                 self._conn.executescript(_SCHEMA)
                 version = 1
             for target in range(version + 1, SCHEMA_VERSION + 1):
+                if target == 3:
+                    # Idempotent, so it runs before the version is recorded.
+                    self._seed_builtin_plugins()
                 self._conn.executescript(f"BEGIN; {_MIGRATIONS[target]} PRAGMA user_version={target}; COMMIT;")
+
+    def _seed_builtin_plugins(self) -> None:
+        """Add the built-in plugins missing from the catalog and give them to the default group.
+
+        A plugin whose key an admin already registered is left as it is. The
+        default group (the first one) receives the built-ins no group or user
+        has yet; a new database has no group here, and ensure_default_group
+        assigns them when it creates one.
+        """
+        for plugin in BUILTIN_PLUGINS:
+            stored = _plugin_columns(plugin)
+            self._conn.execute(
+                f"INSERT OR IGNORE INTO plugins ({', '.join(stored)}) VALUES ({', '.join('?' for _ in stored)})",
+                tuple(stored.values()),
+            )
+        keys = tuple(p["key"] for p in BUILTIN_PLUGINS)
+        self._conn.execute(
+            "INSERT INTO group_plugins SELECT g.id, p.id FROM plugins p, (SELECT MIN(id) AS id FROM groups) g "
+            f"WHERE g.id IS NOT NULL AND p.key IN ({', '.join('?' for _ in keys)}) "
+            "AND p.id NOT IN (SELECT plugin_id FROM group_plugins) "
+            "AND p.id NOT IN (SELECT plugin_id FROM user_plugins)",
+            keys,
+        )
 
     def close(self) -> None:
         self._conn.close()
@@ -181,7 +229,11 @@ class Database:
         row = self._one("SELECT id FROM groups ORDER BY id LIMIT 1")
         if row is not None:
             return row["id"]
-        return self.create_group({"name": "default", "description": "默认用户组", **values})
+        group_id = self.create_group({"name": "default", "description": "默认用户组", **values})
+        keys = tuple(p["key"] for p in BUILTIN_PLUGINS)
+        builtins = self._all(f"SELECT id FROM plugins WHERE key IN ({', '.join('?' for _ in keys)})", keys)
+        self.set_group_plugins(group_id, [r["id"] for r in builtins])
+        return group_id
 
     def default_group_id(self) -> int:
         row = self._one("SELECT id FROM groups ORDER BY id LIMIT 1")

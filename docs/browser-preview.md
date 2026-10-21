@@ -37,8 +37,8 @@ The agent has browser tools in every session, named `mcp__browser__*` (e.g. `bro
 
 ## Enabling it
 
-1. Admin console → **Plugins & MCP** → **添加工作空间浏览器 (add workspace browser)**. The template fills in kind "dsh plugin" and spec `file:/usr/local/lib/dsh-cloud/workspace-browser`.
-2. In the same form, tick the **groups** to enable it for (or assign it to individual users later under Users). Unassigned entries are flagged in red in the list, "未分配，不会生效" (unassigned, not in effect).
+1. It is a built-in plugin: the gateway registers it in **Plugins & MCP** (kind "dsh plugin", spec `file:/usr/local/lib/dsh-cloud/workspace-browser`) and assigns it to the default group when its database is created or upgraded. An entry an admin deleted is not added back.
+2. To change who has it, edit the entry and tick the **groups** to enable it for (or assign it to individual users later under Users). Unassigned entries are flagged in red in the list, "未分配，不会生效" (unassigned, not in effect).
 3. Save, and **restart** the affected workspaces when prompted, or let users pick it up at their next sign-in.
 
 Prerequisites: workspace images built from this project's base image (`sandbox-image/base`), which already contains Chromium, the browser hub, `@playwright/mcp`, and this plugin, so **enabling it needs no network**; and a gateway version that includes this feature (the relay route and port 3081).
@@ -199,5 +199,5 @@ gateway/dsh_gateway/
 ├── app.py                        the /u/<user>/_dsh-cloud/browser route
 ├── proxy.py                      relay_websocket
 └── backends/docker_backend.py    publishes port 3081
-web/src/pages/admin/Plugins.tsx   the "add workspace browser" template, group assignment
+gateway/dsh_gateway/db.py         built-in catalog entry (BUILTIN_PLUGINS), default group assignment
 ```

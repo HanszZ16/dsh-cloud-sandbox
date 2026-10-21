@@ -224,8 +224,53 @@ def test_version_1_database_is_migrated(tmp_path):
     (group,) = db.list_groups()
     assert group["name"] == "default" and group["image_id"] is None
     assert db.list_images() == []
+    assert sorted(p["key"] for p in db.list_plugins()) == ["rag-kb", "workspace-browser"]
+    assert len(group["plugin_ids"]) == 2
     db.close()
-    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 2
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 3
+
+
+def test_built_in_plugins_are_registered_once_and_keep_admin_edits(tmp_path):
+    import sqlite3
+
+    from dsh_gateway.db import _SCHEMA, Database
+
+    path = tmp_path / "gateway.db"
+    old = sqlite3.connect(path)
+    old.executescript(_SCHEMA)
+    old.execute(
+        "INSERT INTO groups (name, mem_limit, cpus, idle_timeout_s, max_lifetime_s) VALUES ('default', '2g', 2, 900, 3600)"
+    )
+    old.execute(
+        "INSERT INTO users (username, password_hash, role, group_id, created_at) VALUES ('ann', 'x', 'user', 1, 0)"
+    )
+    # An admin registered the knowledge base earlier and gave it to one user only.
+    old.execute(
+        "INSERT INTO plugins (key, kind, name, config) VALUES ('rag-kb', 'bundle', 'KB', '{\"spec\": \"@puwenhui/dsh-rag-kb\"}')"
+    )
+    old.execute("INSERT INTO user_plugins VALUES (1, 1)")
+    old.execute("PRAGMA user_version=1")
+    old.commit()
+    old.close()
+
+    db = Database(path)
+    plugins = {p["key"]: p for p in db.list_plugins()}
+    assert plugins["rag-kb"]["config"] == {"spec": "@puwenhui/dsh-rag-kb"}
+    (group,) = db.list_groups()
+    assert group["plugin_ids"] == [plugins["workspace-browser"]["id"]]
+
+    db.delete_plugin(plugins["workspace-browser"]["id"])
+    db.close()
+    assert [p["key"] for p in Database(path).list_plugins()] == ["rag-kb"]
+
+
+def test_a_new_gateway_gives_the_default_group_the_built_in_plugins(tmp_path):
+    from dsh_gateway.db import Database
+
+    db = Database(tmp_path / "gateway.db")
+    group_id = db.ensure_default_group({"mem_limit": "2g", "cpus": 2, "idle_timeout_s": 900, "max_lifetime_s": 3600})
+    keys = {p["id"]: p["key"] for p in db.list_plugins()}
+    assert sorted(keys[i] for i in db.get_group(group_id)["plugin_ids"]) == ["rag-kb", "workspace-browser"]
 
 
 def test_workspace_browser_socket_is_for_the_owner_only(client):

@@ -290,7 +290,7 @@ E2B 后端把镜像地址当作 template id，不做标签检查，需要自己�
 dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName browser，工具名 mcp__browser__*）+ 右侧边栏插件（画面、地址栏、前进/后退/刷新、标签页、状态，agent 开始操作时自动打开）
 ```
 
-**启用：** 管理后台 **插件与 MCP → 添加工作空间浏览器**（模板会填好 spec `file:/usr/local/lib/dsh-cloud/workspace-browser`），再分配给用户组或用户。它是一个 dsh 组合包，和 `@playwright/mcp`（0.0.80）一起装在镜像里，安装不需要联网，在 dsh 启动前完成；它挂载两行配置：连接中转服务的 Playwright MCP、右侧边栏插件。分配后重启工作空间即可：agent 在所有会话里都有 `mcp__browser__*` 工具；也可以在右侧边栏引导页手动点 **浏览器预览**。
+**启用：** 这是内置插件：网关在创建或升级数据库时，会把它登记到 **插件与 MCP**（spec `file:/usr/local/lib/dsh-cloud/workspace-browser`）并分配给默认用户组；要给其他用户组或用户开启，或者取消分配来关闭，都在那里操作。它是一个 dsh 组合包，和 `@playwright/mcp`（0.0.80）一起装在镜像里，安装不需要联网，在 dsh 启动前完成；它挂载两行配置：连接中转服务的 Playwright MCP、右侧边栏插件。分配后重启工作空间即可：agent 在所有会话里都有 `mcp__browser__*` 工具；也可以在右侧边栏引导页手动点 **浏览器预览**。
 
 **说明：**
 
@@ -306,7 +306,7 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 
 镜像里自带第三方插件 [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb)（0.3.1，MIT 许可）。用户直接用大白话添加文档（PDF、DOCX、Markdown、TXT、CSV、JSON）或对话内容（"把 ~/docs/手册.pdf 加进知识库""把刚才的结论存到知识库"），agent 通过向量 + 关键词混合检索（`knowledge_search`）回答，并标注引用的段落。向量在本地用 CPU 计算，模型是 `bge-small-zh-v1.5`，文档不会离开工作空间。
 
-**开启方法：** 管理后台 **插件与 MCP → 添加知识库**（模板会填好 spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`），分配给用户组或用户，再重启他们的工作空间。
+**开启方法：** 这是内置插件：网关在创建或升级数据库时，会把它登记到 **插件与 MCP**（spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`）并分配给默认用户组。要给其他用户组或用户开启，或者取消分配来关闭，都在那里操作，改完重启受影响的工作空间。内置插件只登记一次：管理员删掉的条目不会再加回来；管理员之前用相同 key（`workspace-browser`、`rag-kb`）登记过的条目保持原样。
 
 **部署方式：**
 
