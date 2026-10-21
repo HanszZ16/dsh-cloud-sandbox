@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -90,6 +91,15 @@ def _upstream_headers(request_headers, record: SandboxRecord, browser_host: str)
             headers = {k: v for k, v in headers.items() if k.lower() != "origin"}
             headers["origin"] = f"https://{authority}"
     return headers
+
+
+async def upstream_json(request: Request, client: httpx.AsyncClient, record: SandboxRecord, path: str) -> Any:
+    """GET one JSON route of the user's dsh with the browser's credentials."""
+    headers = _upstream_headers(request.headers, record, request.headers.get("host", ""))
+    headers = {k: v for k, v in headers.items() if k.lower() not in {"content-type", "content-length"}}
+    response = await client.get(f"{record.handle.upstream_url}/{path}", headers=headers)
+    response.raise_for_status()
+    return response.json()
 
 
 async def forward_http(

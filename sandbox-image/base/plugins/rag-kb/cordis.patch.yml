@@ -1,0 +1,7 @@
+# dsh-cloud knowledge base bundle: one host row (tools, system prompt, panel
+# routes, knowledgeDir watcher) whose package also serves the client face.
+# Configuration defaults live in index.js's Config; users change the search
+# settings under Settings → Plugins → Knowledge base.
+- insert:
+    - id: rag-kb
+      name: dsh-cloud-rag-kb

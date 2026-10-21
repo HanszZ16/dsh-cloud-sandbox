@@ -39,25 +39,8 @@ COPY browser-hub/package.json /usr/local/lib/dsh-cloud/browser-hub/package.json
 RUN cd /usr/local/lib/dsh-cloud/browser-hub \
  && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --omit=dev --no-fund --no-audit \
  && npm cache clean --force
-# Plugins shipped in the image with their dependencies, installed for users as
-# link:/usr/local/lib/dsh-cloud/plugins/<name>: the user's profile holds only a
-# symlink, so a plugin adds nothing to the persisted home and is upgraded by
-# the image. Install scripts are skipped: the native packages these plugins
-# use (onnxruntime-node, sharp) ship prebuilt binaries. dsh-home-paths is added
-# because rag-kb imports it without declaring it; peers come from dsh itself.
-# NPM_REGISTRY may name a mirror (e.g. https://registry.npmmirror.com) for
-# these plugin installs only.
-ARG RAG_KB_VERSION=0.3.1
-ARG NPM_REGISTRY=https://registry.npmjs.org
-RUN set -eu; dir=/usr/local/lib/dsh-cloud/plugins/rag-kb; mkdir -p "$dir"; cd /tmp \
- && npm pack --silent --registry "$NPM_REGISTRY" "@puwenhui/dsh-rag-kb@${RAG_KB_VERSION}" \
- && tar xzf "puwenhui-dsh-rag-kb-${RAG_KB_VERSION}.tgz" --strip-components=1 -C "$dir" \
- && rm "puwenhui-dsh-rag-kb-${RAG_KB_VERSION}.tgz" \
- && cd "$dir" \
- && npm install --registry "$NPM_REGISTRY" --omit=dev --legacy-peer-deps --ignore-scripts --no-save --no-fund --no-audit \
-      "@deepseek-ai/dsh-home-paths@${DSH_VERSION}" \
- && npm cache clean --force
-# rag-kb's embedding model, pinned to a revision and checked. The plugin reads
+# rag-kb's embedding model (before the plugin layers, so plugin changes do
+# not download it again), pinned to a revision and checked. The plugin reads
 # it from ~/.dsh/rag-kb/hf-cache, which provision links to this copy.
 # HF_ENDPOINT may name a mirror (e.g. https://hf-mirror.com).
 ARG HF_ENDPOINT=https://huggingface.co
@@ -67,11 +50,24 @@ RUN set -eu; repo=Xenova/bge-small-zh-v1.5; rev=75c43b069aac4d136ba6bc1122f995fe
       curl -fsSL --retry 5 --retry-all-errors -o "$dir/$file" "$HF_ENDPOINT/$repo/resolve/$rev/$file"; \
     done; \
     echo "69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a  $dir/onnx/model.onnx" | sha256sum -c -
-COPY plugins/rag-kb/dsh-cloud.json /usr/local/lib/dsh-cloud/plugins/rag-kb/dsh-cloud.json
+# Plugins shipped in the image with their dependencies, installed for users as
+# link:/usr/local/lib/dsh-cloud/plugins/<name>: the user's profile holds only a
+# symlink, so a plugin adds nothing to the persisted home and is upgraded by
+# the image. rag-kb is our fork of @puwenhui/dsh-rag-kb (plugins/rag-kb).
+# Install scripts are skipped: its native packages (onnxruntime-node, sharp)
+# ship prebuilt binaries. Peers (cordis) come from dsh itself.
+# NPM_REGISTRY may name a mirror (e.g. https://registry.npmmirror.com) for
+# these plugin installs only.
+ARG NPM_REGISTRY=https://registry.npmjs.org
+COPY plugins/rag-kb/package.json /usr/local/lib/dsh-cloud/plugins/rag-kb/package.json
+RUN cd /usr/local/lib/dsh-cloud/plugins/rag-kb \
+ && npm install --registry "$NPM_REGISTRY" --omit=dev --legacy-peer-deps --ignore-scripts --no-package-lock --no-fund --no-audit \
+ && npm cache clean --force
+COPY plugins/rag-kb /usr/local/lib/dsh-cloud/plugins/rag-kb
 COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
-# The workspace browser dsh bundle (live-view tab + the Playwright MCP row);
-# admins provision it to groups with the spec
-# file:/usr/local/lib/dsh-cloud/workspace-browser.
+# The workspace browser dsh bundle (live-view tab + the Playwright MCP row),
+# provisioned with the spec file:/usr/local/lib/dsh-cloud/workspace-browser;
+# the gateway registers it and rag-kb as built-in plugins.
 COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
 COPY provision.py /usr/local/lib/dsh-cloud/provision.py

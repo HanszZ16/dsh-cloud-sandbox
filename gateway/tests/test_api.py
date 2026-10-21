@@ -283,3 +283,35 @@ def test_workspace_browser_socket_is_for_the_owner_only(client):
             with client.websocket_connect(path) as ws:
                 ws.receive_text()
         assert closed.value.code == code
+
+
+def test_knowledge_base_uploads_are_checked_before_they_reach_the_workspace(tmp_path, backend):
+    settings = dataclasses.replace(
+        load_settings(), state_dir=tmp_path / "state", db_path=tmp_path / "gw.db", web_dist=tmp_path / "dist",
+        admin_username="root", admin_password="rootpass1", secret_key="test-secret",
+        kb_max_file_bytes=100, kb_quota_bytes=150,
+    )
+    with TestClient(create_app(settings, backend)) as client:
+        check_knowledge_base_uploads(client)
+
+
+def check_knowledge_base_uploads(client):
+    login(client, "root", "rootpass1")
+    client.post("/api/me/sandbox/start")
+    forwarded = []
+
+    def sandbox(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"usedBytes": 60})
+        forwarded.append(request.read())
+        return httpx.Response(202, stream=httpx.ByteStream(b"{}"))
+
+    client.app.state.sandbox_http = httpx.AsyncClient(transport=httpx.MockTransport(sandbox))
+    upload = lambda body: client.post("/u/root/api/dshCloudKb/upload?name=a.md", content=body)
+
+    assert client.get("/u/root/_dsh-cloud/kb/limits").json() == {"maxFileBytes": 100, "quotaBytes": 150}
+    assert upload(b"x" * 101).json()["code"] == "too-large"
+    refused = upload(b"x" * 91)
+    assert refused.status_code == 413 and refused.json()["code"] == "quota"
+    assert upload(b"x" * 90).status_code == 202
+    assert forwarded == [b"x" * 90]

@@ -89,7 +89,7 @@ dsh-cloud-sandbox/
 │   │   ├── entrypoint.sh          安装 MCP 包 → 启动浏览器中转服务和 dsh（带管理员 overlay）→ 后台安装默认插件；停止时把信号转给两者
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
 │   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「工作空间浏览器」
-│   │   ├── plugins/rag-kb/        镜像自带的知识库插件的清单（链接共享的模型）
+│   │   ├── plugins/rag-kb/        知识库插件（@puwenhui/dsh-rag-kb 的 fork），装在镜像里
 │   │   └── provision.py           按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
 │   └── variants/
 │       └── data-science/Dockerfile 示例团队镜像：基础镜像 + numpy、pandas、scipy、matplotlib、scikit-learn
@@ -304,27 +304,37 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 
 ## 知识库（RAG）
 
-镜像里自带第三方插件 [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb)（0.3.1，MIT 许可）。用户直接用大白话添加文档（PDF、DOCX、Markdown、TXT、CSV、JSON）或对话内容（"把 ~/docs/手册.pdf 加进知识库""把刚才的结论存到知识库"），agent 通过向量 + 关键词混合检索（`knowledge_search`）回答，并标注引用的段落。向量在本地用 CPU 计算，模型是 `bge-small-zh-v1.5`，文档不会离开工作空间。
+每个工作空间都有一个知识库：用户在右侧边栏的 **知识库** 标签页上传文档（PDF、DOCX、Markdown、TXT、CSV、JSON、LOG），也可以直接用大白话添加文件或对话内容（"把 notes/手册.pdf 加进知识库""把刚才的结论存到知识库"）。agent 通过向量 + 关键词混合检索（`knowledge_search`）回答，并标注引用的段落。向量在本地用 CPU 计算，模型是 `bge-small-zh-v1.5`，文档不会离开工作空间。
+
+插件在 `sandbox-image/base/plugins/rag-kb`，是 [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb) 0.3.1（MIT）的 fork，改动见它的 [README](sandbox-image/base/plugins/rag-kb/README.md)。
 
 **开启方法：** 这是内置插件：网关在创建或升级数据库时，会把它登记到 **插件与 MCP**（spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`）并分配给默认用户组。要给其他用户组或用户开启，或者取消分配来关闭，都在那里操作，改完重启受影响的工作空间。内置插件只登记一次：管理员删掉的条目不会再加回来；管理员之前用相同 key（`workspace-browser`、`rag-kb`）登记过的条目保持原样。
+
+**管理文档：**
+
+- **侧边面板：** 上传（按钮或拖拽）、列表（大小、分块数、索引进度）、删除、全部重建索引。上传路径是 浏览器 → 网关 → 用户 dsh 里插件的接口；网关先检查登录、单个文件大小（`KB_MAX_FILE_MB`，默认 50）和这个用户的总量（`KB_QUOTA_MB`，默认 500），不合格的请求一个字节都不会进工作空间。插件把文件存到 `~/knowledge/` 并建索引。
+- **`~/knowledge/` 会被监视：** 用其他方式放进去的文件（文件面板、终端、agent）会自动索引，在这里删掉文件也会从知识库删除。在面板里删除文档也会删掉这里的文件。
+- **对话：** agent 的 `knowledge_manage` 工具可以添加文件或目录（通过 dsh 的文件系统服务读取，相对路径按当前会话的目录解析）、保存对话内容、删除、重建索引。
+- **设置 → 内置插件 → 知识库：** 知识库描述（agent 检索前会读）、检索返回条数、相似度阈值、reranker。保存后下一次检索生效。
 
 **部署方式：**
 
 | 部分 | 位置 | 每个用户的开销 |
 |---|---|---|
-| 插件和依赖（约 370 MB，主要是 onnxruntime） | 镜像 `/usr/local/lib/dsh-cloud/plugins/rag-kb`；用户的 profile 里只有一个符号链接（`link:`） | 无；随镜像升级 |
+| 插件和依赖（约 390 MB，主要是 onnxruntime） | 镜像 `/usr/local/lib/dsh-cloud/plugins/rag-kb`；用户的 profile 里只有一个符号链接（`link:`） | 无；随镜像升级 |
 | 向量模型（95 MB，构建时固定版本并校验 sha256） | 镜像 `/usr/local/share/dsh-cloud/models/Xenova/bge-small-zh-v1.5`；插件在 `~/.dsh/rag-kb/hf-cache` 里找模型，provision 在 dsh 启动前把它链接到镜像里的那份 | 无 |
+| 上传的文件 | `~/knowledge/` | 用户数据，随工作空间保存，受 `KB_QUOTA_MB` 限制 |
 | 知识库索引 | `~/.dsh/rag-kb/index.db` | 用户数据，随工作空间保存（几 KB 到几 MB） |
 
-已在工作空间里验证：通过对话添加文档；在新会话里换一种说法提问，能答对并标注出处；休眠恢复后再测一遍同样正常；全程没有任何下载。
+之前装过上游插件的工作空间会保留原来的索引：下次启动时 provision 把旧包换成这个 fork，fork 会打开并升级旧的索引文件。
+
+已在测试工作空间里验证：面板上传（Markdown、TXT；`.exe` 和带 `../` 的文件名被拒绝）、通过 `~/knowledge/` 加入 PDF 和 DOCX、删除、重建索引、监视目录的增删、agent 在新会话里答对并标注出处、用会话相对路径 `add`、中英文设置页，以及休眠恢复后再测一遍。建索引和检索之后整个工作空间约用 560 MiB（上限 2 GiB），默认内存够用。
 
 **限制：**
 
-- **内存：** 模型加载后 dsh 从约 230 MB 涨到约 580 MB，因为插件加载了两份模型（检索一份、建索引一份）。reranker 保持关闭（首次使用会再下载约 1 GB 的模型）；同时使用工作空间浏览器的用户组建议给 3 GB。
-- **还没有管理界面：** 插件自带的页面（设置 → 插件 → 知识库）只有配置项：描述、监视目录、检索参数。添加、查看、删除文档都要在对话里说；文件可以通过聊天附件或让 agent 下载放进工作空间。
-- 插件直接用 Node 的 `fs` 读文件，不经过 dsh 的文件权限检查；每个用户独占一个容器，所以可以接受。
-- 第三方代码，单个作者，2026-10-08 首次发布。版本已固定（`RAG_KB_VERSION`），升级前请先审查代码。
-- 设置页只有中文。
+- 没有需要就别开 reranker：首次使用会从 `modelHost`（默认 Hugging Face）下载约 1 GB 的模型，并占用更多内存。
+- 配额在每次上传时按用户文档的总大小检查；两个上传同时发出时，合计最多可能超出一个文件的大小。
+- 面板里保存的设置写在用户自己的 profile 里；`knowledgeDir`、模型来源和 `maxFileBytes` 是插件的配置项，管理员可以用配置补丁设置，下次启动生效。
 
 ## 插件、MCP 与配置补丁的下发
 
@@ -358,7 +368,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | 记忆（MCP 记忆服务的数据，例如 `~/.mcp-memory.jsonl`） | `/home/agent` 下 | ✅ 同上；配置 MCP 时请把数据路径放在 `/home/agent` 下 |
 | 用户文件、项目、npm 全局包（`NPM_CONFIG_PREFIX=~/.local`）、dotfiles | `/home/agent` | ✅ 同上 |
 | 已下发记录 | `/home/agent/.dsh-cloud/provisioned.json` | ✅ 同上 |
-| 知识库索引 | `/home/agent/.dsh/rag-kb/index.db` | ✅ 同上；插件和模型来自镜像 |
+| 知识库文件和索引 | `/home/agent/knowledge/`、`/home/agent/.dsh/rag-kb/index.db` | ✅ 同上；插件和模型来自镜像 |
 | 系统目录（`/usr`、`/tmp`、apt 软件、pnpm 内容缓存 `/var/cache/pnpm-store`） | 用户组选择的镜像 | ❌ 每次启动回到镜像初始状态；需要的系统软件请放进镜像（见[镜像](#镜像按用户组提供不同的软件)） |
 | 快照文件 | 网关 `gateway/state/<用户名>/home.tar` | ✅ 原子写入（先写 `.partial` 再替换） |
 | 账号、用户组、插件目录、会话、用量、审计 | 网关 `gateway/data/gateway.db`（SQLite） | ✅ |
@@ -474,6 +484,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | `SANDBOX_E2B_TEMPLATE` | 空 | E2B 后端必填 |
 | `SANDBOX_HTTP_PROXY` | 空 | 沙箱出网代理（安装插件、npm 包、联网工具），例如 `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | 默认用户组的初始资源 |
+| `KB_MAX_FILE_MB` / `KB_QUOTA_MB` | `50` / `500` | 知识库上传：单个文件上限，以及一个用户的文档总量上限 |
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | 默认用户组的初始空闲时限和最长运行时间 |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | 回收检查间隔 |
 | `SANDBOX_START_TIMEOUT_S` | `600` | 等待 dsh 启动的最长时间（包括首次安装 MCP 包） |

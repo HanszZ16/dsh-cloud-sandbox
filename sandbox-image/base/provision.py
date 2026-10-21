@@ -167,13 +167,33 @@ def is_linked(spec: str) -> bool:
     return bool(name) and name in dependencies() and installed.is_symlink() and installed.resolve() == source.resolve()
 
 
+def unlink_renamed(spec: str) -> bool:
+    """Remove profile packages that link this link: spec's directory under another name.
+
+    Left in place, such a package would load the directory's code a second time
+    under its old name. Returns False when a removal failed.
+    """
+    source = Path(spec[len("link:"):]).resolve()
+    name = read_json(source / "package.json", {}).get("name")
+    for package in dependencies():
+        installed = PROFILE / "node_modules" / package
+        if package != name and installed.is_symlink() and installed.resolve() == source:
+            log(f"{package} was renamed to {name}; removing it")
+            if not run(["dsh", "plugin", "--profile", "web", "remove", package], spec, INSTALL_TIMEOUT_S):
+                return False
+    return True
+
+
 def install_bundle(key: str, spec: str) -> bool:
     if spec.startswith("file:"):
         refreshed = refresh_local(spec)
         if refreshed is not None:
             return refreshed
-    if spec.startswith("link:") and is_linked(spec):
-        return True
+    if spec.startswith("link:"):
+        if not unlink_renamed(spec):
+            return False
+        if is_linked(spec):
+            return True
     before = dependencies()
     log(f"installing {spec} ({key})")
     if not run(["dsh", "plugin", "--profile", "web", "add", spec], spec, INSTALL_TIMEOUT_S):
@@ -196,12 +216,18 @@ def revision(spec: str) -> str:
     """What the provisioning record stores for `spec`.
 
     A local `file:` package (shipped in the image) also records its version,
-    so a newer image's copy is installed over the old one at the next start.
+    so a newer image's copy is installed over the old one at the next start; a
+    `link:` package records its name and version, so a rename or upgrade is
+    checked once.
     """
     if spec.startswith("file:"):
         version = read_json(Path(spec[len("file:"):]) / "package.json", {}).get("version")
         if version:
             return f"{spec}#{version}"
+    if spec.startswith("link:"):
+        manifest = read_json(Path(spec[len("link:"):]) / "package.json", {})
+        if manifest.get("name") and manifest.get("version"):
+            return f"{spec}#{manifest['name']}@{manifest['version']}"
     return spec
 
 

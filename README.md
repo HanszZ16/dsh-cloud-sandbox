@@ -90,7 +90,7 @@ dsh-cloud-sandbox/
 │   │   ├── entrypoint.sh          Install MCP packages → start the browser hub and dsh (with the admin overlay) → install default plugins in the background; forwards stop signals to both
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
 │   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Workspace browser"
-│   │   ├── plugins/rag-kb/        Manifest of the knowledge base plugin shipped in the image (links the shared model)
+│   │   ├── plugins/rag-kb/        Knowledge base plugin (our fork of @puwenhui/dsh-rag-kb), shipped in the image
 │   │   └── provision.py           Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
 │   └── variants/
 │       └── data-science/Dockerfile Example team image: the base plus numpy, pandas, scipy, matplotlib, scikit-learn
@@ -305,27 +305,37 @@ dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName br
 
 ## Knowledge base (RAG)
 
-The image ships the third-party plugin [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb) (0.3.1, MIT). Users add documents (PDF, DOCX, Markdown, TXT, CSV, JSON) or conversation content in plain words ("add ~/docs/handbook.pdf to the knowledge base", "save this to the knowledge base"), and the agent answers from them through hybrid vector and keyword retrieval (`knowledge_search`), citing the source paragraphs. Embeddings are computed locally on the CPU with `bge-small-zh-v1.5`; documents never leave the workspace.
+Each workspace has a knowledge base: users upload documents (PDF, DOCX, Markdown, TXT, CSV, JSON, LOG) in the right sidebar's **Knowledge base** tab, or add files and conversation content in plain words ("add notes/handbook.pdf to the knowledge base", "save this to the knowledge base"). The agent answers from them through hybrid vector and keyword retrieval (`knowledge_search`) and cites the source paragraphs. Embeddings are computed locally on the CPU with `bge-small-zh-v1.5`; documents never leave the workspace.
+
+The plugin is `sandbox-image/base/plugins/rag-kb`, our fork of [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb) 0.3.1 (MIT); its [README](sandbox-image/base/plugins/rag-kb/README.md) lists what changed.
 
 **Enabling it:** it is a built-in plugin: the gateway registers it in **Plugins & MCP** (spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`) and assigns it to the default group when its database is created or upgraded. Assign it to other groups or users there, or unassign it to turn it off; restart the affected workspaces either way. The gateway registers the built-in plugins once: an entry an admin deleted is not added back, and an entry an admin registered earlier under the same key (`workspace-browser`, `rag-kb`) is kept as it is.
+
+**Managing documents:**
+
+- **Side panel:** upload (button or drag and drop), list with size, chunk count, and indexing progress, delete, and re-index all. Uploads go browser → gateway → the plugin's route in the user's dsh; the gateway checks the sign-in, the file size (`KB_MAX_FILE_MB`, default 50), and the user's total (`KB_QUOTA_MB`, default 500) before any byte reaches the workspace. The plugin saves the file to `~/knowledge/` and indexes it.
+- **`~/knowledge/` is watched:** files put there any other way (Files panel, terminal, the agent) are indexed, and deleting one removes its document. Deleting a document in the panel also deletes its file there.
+- **Conversation:** the agent's `knowledge_manage` tool adds files or directories (read through dsh's filesystem service, relative to the session's directory), saves conversation content, removes, and re-indexes.
+- **Settings → Built-in plugins → Knowledge base:** description (the agent reads it before searching), results per search, similarity threshold, reranker. They apply to the next search.
 
 **How it is shipped:**
 
 | Part | Location | Per-user cost |
 |---|---|---|
-| Plugin and its dependencies (about 370 MB, mostly onnxruntime) | Image: `/usr/local/lib/dsh-cloud/plugins/rag-kb`; the user's profile holds only a symlink (`link:`) | None; upgraded with the image |
+| Plugin and its dependencies (about 390 MB, mostly onnxruntime) | Image: `/usr/local/lib/dsh-cloud/plugins/rag-kb`; the user's profile holds only a symlink (`link:`) | None; upgraded with the image |
 | Embedding model (95 MB, pinned revision, checksum verified at build) | Image: `/usr/local/share/dsh-cloud/models/Xenova/bge-small-zh-v1.5`; the plugin looks in `~/.dsh/rag-kb/hf-cache`, which provision links to the image copy before dsh starts | None |
+| Uploaded files | `~/knowledge/` | The user's data, saved with the workspace, limited by `KB_QUOTA_MB` |
 | Knowledge base index | `~/.dsh/rag-kb/index.db` | The user's data, saved with the workspace (KB to MB) |
 
-Verified in a workspace: adding a document through conversation, answering a reworded question in a new session with citations, and both again after sleep and resume, with no download at any point.
+A workspace that had the upstream plugin keeps its index: provision replaces the old package with the fork at the next start, and the fork opens and upgrades the old index file.
+
+Verified in a test workspace: uploads from the panel (Markdown, TXT; a `.exe` and a `../` name refused), PDF and DOCX through `~/knowledge/`, delete, re-index, watcher add and remove, the agent answering in a new session with citations, `add` with a session-relative path, settings in Chinese and English, and all of it again after sleep and resume. The whole workspace used about 560 MiB of its 2 GiB after indexing and searching, so the default memory limit is enough.
 
 **Limits:**
 
-- **Memory:** with the model loaded, dsh grows from about 230 MB to about 580 MB, because the plugin loads the model twice (once for queries, once for indexing). Keep the reranker off (it downloads another model of about 1 GB at first use), and give groups that also use the workspace browser 3 GB.
-- **No management UI yet:** the plugin's own page (Settings → Plugins → 知识库) only holds settings: description, watched directory, and retrieval parameters. Documents are added, listed, and removed through conversation; files reach the workspace as chat attachments or through the agent.
-- The plugin reads files with Node's `fs` directly, bypassing dsh's file permission checks; acceptable because every user has a container of their own.
-- Third-party code from one author, first published on 2026-10-08. The version is pinned (`RAG_KB_VERSION`); review the code before raising it.
-- The settings page text is Chinese only.
+- Keep the reranker off unless needed: it downloads a model of about 1 GB at first use (from `modelHost`, Hugging Face by default) and needs more memory.
+- Quota is checked per upload against the total size of the user's documents; two uploads sent at the same moment can together exceed it by up to one file.
+- Settings saved in the panel go into the user's profile; `knowledgeDir`, the model source, and `maxFileBytes` are plugin config fields an admin can set with a config patch, and apply at the next start.
 
 ## Provisioning plugins, MCP servers, and config patches
 
@@ -359,7 +369,7 @@ Notes:
 | Memory (data of an MCP memory server, e.g. `~/.mcp-memory.jsonl`) | Under `/home/agent` | ✅ Same; point MCP data paths under `/home/agent` |
 | User files, projects, global npm packages (`NPM_CONFIG_PREFIX=~/.local`), dotfiles | `/home/agent` | ✅ Same |
 | Provisioning record | `/home/agent/.dsh-cloud/provisioned.json` | ✅ Same |
-| Knowledge base index | `/home/agent/.dsh/rag-kb/index.db` | ✅ Same; the plugin and model come from the image |
+| Knowledge base files and index | `/home/agent/knowledge/`, `/home/agent/.dsh/rag-kb/index.db` | ✅ Same; the plugin and model come from the image |
 | System directories (`/usr`, `/tmp`, apt software, the pnpm content store `/var/cache/pnpm-store`) | The image the group chose | ❌ Back to the image's state on every start; put needed system software in an image (see [Images](#images-different-software-per-group)) |
 | Snapshot files | Gateway `gateway/state/<username>/home.tar` | ✅ Written atomically (`.partial`, then rename) |
 | Accounts, groups, plugin catalog, sessions, usage, audit | Gateway `gateway/data/gateway.db` (SQLite) | ✅ |
@@ -475,6 +485,7 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 | `SANDBOX_E2B_TEMPLATE` | Empty | Required for the E2B backend |
 | `SANDBOX_HTTP_PROXY` | Empty | Egress proxy for sandboxes (plugin and npm installs, web tools), e.g. `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | Default group's initial resources |
+| `KB_MAX_FILE_MB` / `KB_QUOTA_MB` | `50` / `500` | Knowledge base uploads: largest file, and the total one user's documents may hold |
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | Default group's initial idle timeout and maximum lifetime |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | Reaper interval |
 | `SANDBOX_START_TIMEOUT_S` | `600` | How long to wait for dsh to start (including first-time MCP package installs) |

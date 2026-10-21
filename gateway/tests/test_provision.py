@@ -22,7 +22,7 @@ def provision(tmp_path, monkeypatch):
 def image_plugin(root: Path, caches: dict[str, str]) -> str:
     package = root / "plugins" / "kb"
     package.mkdir(parents=True)
-    (package / "package.json").write_text(json.dumps({"name": "@x/kb", "dsh": {"bundle": {}}}))
+    (package / "package.json").write_text(json.dumps({"name": "@x/kb", "version": "1.0.0", "dsh": {"bundle": {}}}))
     (package / "dsh-cloud.json").write_text(json.dumps({"sharedCaches": caches}))
     return f"link:{package}"
 
@@ -55,3 +55,22 @@ def test_a_link_bundle_counts_as_installed_only_when_the_profile_links_its_direc
     (modules / "kb").rmdir()
     (modules / "kb").symlink_to(spec[len("link:"):])
     assert provision.is_linked(spec)
+
+
+def test_a_renamed_link_bundle_replaces_the_old_name_and_is_rechecked(provision, tmp_path, monkeypatch):
+    spec = image_plugin(tmp_path, {})
+    source = Path(spec[len("link:"):])
+    modules = provision.PROFILE / "node_modules" / "@old"
+    modules.mkdir(parents=True)
+    (modules / "kb").symlink_to(source)
+    (provision.PROFILE / "package.json").write_text(json.dumps({"dependencies": {"@old/kb": f"link:{source}"}}))
+    commands = []
+    monkeypatch.setattr(provision, "run", lambda command, spec, timeout: commands.append(command) or True)
+
+    assert provision.unlink_renamed(spec)
+    assert commands == [["dsh", "plugin", "--profile", "web", "remove", "@old/kb"]]
+
+    before = provision.revision(spec)
+    manifest = json.loads((source / "package.json").read_text())
+    (source / "package.json").write_text(json.dumps({**manifest, "version": "2.0.0"}))
+    assert provision.revision(spec) != before

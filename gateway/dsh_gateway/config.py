@@ -48,6 +48,9 @@ class Settings:
     start_timeout_s: int
     # Environment added to every sandbox, e.g. an egress proxy.
     sandbox_env: dict[str, str] = field(default_factory=dict)
+    # Knowledge base uploads: largest file, and the most a user's documents may hold.
+    kb_max_file_bytes: int = 50 * 1024 * 1024
+    kb_quota_bytes: int = 500 * 1024 * 1024
 
     @property
     def public_hostname(self) -> str:
@@ -99,4 +102,6 @@ def load_settings() -> Settings:
         reap_interval_s=int(os.environ.get("SANDBOX_REAP_INTERVAL_S", "15")),
         start_timeout_s=int(os.environ.get("SANDBOX_START_TIMEOUT_S", "600")),
         sandbox_env=_sandbox_env(callback),
+        kb_max_file_bytes=int(float(os.environ.get("KB_MAX_FILE_MB", "50")) * 1024 * 1024),
+        kb_quota_bytes=int(float(os.environ.get("KB_QUOTA_MB", "500")) * 1024 * 1024),
     )
