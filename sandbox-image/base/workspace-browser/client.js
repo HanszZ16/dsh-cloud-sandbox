@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
     const NS = 'dshCloudWorkspaceBrowser'
     const COPY = {
       zh: {
-        title: '浏览器预览', description: '实时查看并接管 Agent 正在操作的浏览器',
+        title: '远程浏览器', description: '实时查看并接管 Agent 在云端工作空间里操作的浏览器',
         address: '输入网址后回车', starting: '正在启动浏览器…', connecting: '正在连接…',
         reconnecting: '连接已断开，正在重连…', agent: 'Agent 正在操作', you: '你可以直接点击和输入',
         unavailable: '这个工作空间还没有浏览器。请退出登录后重新登录，让工作空间用新版本重新启动。',
@@ -38,7 +38,7 @@ window.__ModuleLoader__.load({
         ok: '确定', cancel: '取消', untitled: '新标签页',
       },
       en: {
-        title: 'Browser preview', description: 'Watch and take over the browser the agent is operating',
+        title: 'Remote browser', description: 'Watch and take over the browser the agent runs in your cloud workspace',
         address: 'Enter a URL', starting: 'Starting the browser…', connecting: 'Connecting…',
         reconnecting: 'Disconnected, reconnecting…', agent: 'Agent is operating', you: 'Click and type to take over',
         unavailable: 'This workspace has no browser yet. Sign out and back in so it restarts on the current version.',
@@ -47,9 +47,26 @@ window.__ModuleLoader__.load({
         ok: 'OK', cancel: 'Cancel', untitled: 'New tab',
       },
     }
-    // dsh's own icons, so the tab, guide entry, and toolbar match its Browser, Files, and Terminal.
+    // dsh's own toolbar icons, so the controls match its Browser, Files, and Terminal.
     const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
-    const { GuideArtworkBrowser, IconGlobeOutlineRegular, IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular } = primitives
+    const { IconChevronLeftOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular } = primitives
+
+    // A monitor with a pointer: a browser operated remotely, set apart from dsh's
+    // own Browser (the globe), which opens pages on the user's computer. The guide
+    // artwork follows dsh's 36px guide palette; the tab icon follows its 16px
+    // outline icons and their text color.
+    function GuideArtworkRemoteBrowser({ size = 36, className }) {
+      return h('svg', { width: size, height: size, className, 'aria-hidden': true, viewBox: '0 0 36 36', fill: 'none' },
+        h('rect', { x: 6.5, y: 8, width: 23, height: 16, rx: 3, stroke: '#539CFA', strokeWidth: 2 }),
+        h('path', { d: 'M18 24V28.5M13 28.5H23', stroke: '#539CFA', strokeWidth: 2, strokeLinecap: 'round' }),
+        h('path', { d: 'M15.2 11.8L22.6 15.1L19.3 16.3L17.9 19.6L15.2 11.8Z', fill: '#539CFA', stroke: '#539CFA', strokeWidth: 1.2, strokeLinejoin: 'round' }))
+    }
+    function IconRemoteBrowser({ size = 16, className }) {
+      return h('svg', { width: size, height: size, className, 'aria-hidden': true, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.2 },
+        h('rect', { x: 1.9, y: 2.6, width: 12.2, height: 8.6, rx: 1.6 }),
+        h('path', { d: 'M8 11.2V13.6M5.4 13.6H10.6', strokeLinecap: 'round' }),
+        h('path', { d: 'M6.6 4.7L10.4 6.4L8.7 7L8 8.7L6.6 4.7Z', fill: 'currentColor', strokeLinejoin: 'round' }))
+    }
 
     // Keys forwarded as key presses; everything else arrives as text through the input box.
     const KEY_CODES = {
@@ -76,10 +93,10 @@ window.__ModuleLoader__.load({
         strokeWidth: 1.8, strokeLinecap: 'round', strokeLinejoin: 'round', className, 'aria-hidden': true,
       }, ...[].concat(d).map((path, i) => h('path', { key: i, d: path })))
     }
-    /** Tab chip title: the globe and the localized name, like dsh's Browser tab. */
+    /** Tab chip title: the remote-browser icon and the localized name, like dsh's Browser tab. */
     function WorkspaceBrowserTitle({ t }) {
       return h(React.Fragment, null,
-        h('span', { style: { display: 'inline-flex', flex: '0 0 auto', marginRight: 4 } }, h(IconGlobeOutlineRegular, null)),
+        h('span', { style: { display: 'inline-flex', flex: '0 0 auto', marginRight: 4 } }, h(IconRemoteBrowser, null)),
         // The chip's label box runs about 14px under its close button; stop the text
         // short of the button and end long titles with an ellipsis.
         h('span', { style: { minWidth: 0, marginRight: 16, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t('title')))
@@ -357,7 +374,7 @@ window.__ModuleLoader__.load({
         kind: KIND,
         priority: 'extension',
         title: () => t('title'),
-        guide: [{ id: 'open', order: 31, title: () => t('title'), description: () => t('description'), icon: GuideArtworkBrowser }],
+        guide: [{ id: 'open', order: 31, title: () => t('title'), description: () => t('description'), icon: GuideArtworkRemoteBrowser }],
       }), 'dsh-cloud-workspace-browser: type')
       ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab', key: ID, locale: NS,

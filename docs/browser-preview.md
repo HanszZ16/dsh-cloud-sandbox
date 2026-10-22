@@ -1,8 +1,8 @@
-# Browser preview
+# Remote browser
 
 English | [中文](browser-preview.zh.md)
 
-Each workspace has one long-lived Chromium. The agent operates it through Playwright MCP, and the user sees the same browser live in the "Browser preview" tab of dsh's right sidebar and can take over at any time: click, scroll, type (including with a Chinese input method), switch tabs, and navigate. Typical uses: the user completes a sign-in or CAPTCHA the agent runs into, or watches what the agent is actually doing on a page.
+Each workspace has one long-lived Chromium. The agent operates it through Playwright MCP, and the user sees the same browser live in the "Remote browser" tab of dsh's right sidebar and can take over at any time: click, scroll, type (including with a Chinese input method), switch tabs, and navigate. Typical uses: the user completes a sign-in or CAPTCHA the agent runs into, or watches what the agent is actually doing on a page.
 
 This document covers using, implementing, deploying, and the limits of the feature. For the project as a whole, see the [README](../README.md).
 
@@ -24,13 +24,13 @@ This document covers using, implementing, deploying, and the limits of the featu
 
 | Situation | Behavior |
 |---|---|
-| The agent starts operating the browser | The right sidebar opens the "Browser preview" tab by itself (expanding a collapsed sidebar, or bringing an open tab forward); the status shows a blue dot, "Agent is operating", and the view follows live |
+| The agent starts operating the browser | The right sidebar opens the "Remote browser" tab by itself (expanding a collapsed sidebar, or bringing an open tab forward); the status shows a blue dot, "Agent is operating", and the view follows live |
 | The agent stops for about 3 seconds | The status returns to a green dot, "Click and type to take over" |
 | The user takes over | Click, scroll, and type directly on the view; input methods and paste work; Enter, Backspace, Tab, arrows, and Ctrl/Cmd shortcuts are forwarded |
 | Toolbar | Back, forward, reload, an address bar (Enter navigates; a bare host gets https), new tab; with several tabs, a tab strip to switch and close them |
 | A page opens alert / confirm / prompt | It appears in the pane with OK / Cancel |
-| Opening it by hand | "Browser preview" on the right sidebar's guide page (the blue globe, in the same style as "Workspace files" and "New terminal") |
-| Language | Follows dsh's language setting: "浏览器预览" in Chinese, "Browser preview" in English; dsh's "follow system" option tracks the system language |
+| Opening it by hand | "Remote browser" on the right sidebar's guide page (the blue monitor icon, in the same style as "Workspace files" and "New terminal") |
+| Language | Follows dsh's language setting: "远程浏览器" in Chinese, "Remote browser" in English; dsh's "follow system" option tracks the system language |
 | Coming back after the workspace slept | The browser's cookies, sign-ins, and history are still there |
 
 The agent has browser tools in every session, named `mcp__browser__*` (e.g. `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`).
@@ -47,7 +47,7 @@ Prerequisites: workspace images built from this project's base image (`sandbox-i
 
 ```
 User's browser (dsh Web page)
- ├─ right-sidebar "Browser preview" ─ WS /u/<user>/_dsh-cloud/browser ──────────┐
+ ├─ right-sidebar "Remote browser" ─ WS /u/<user>/_dsh-cloud/browser ──────────┐
  └─ page-level watch connection ───── WS /u/<user>/_dsh-cloud/browser?watch=1 ──┤
                                                                                  ▼
 Gateway (FastAPI): checks the session belongs to that user, relays to the sandbox's port 3081
@@ -155,7 +155,7 @@ In the provisioning record `~/.dsh-cloud/provisioned.json`, `file:` entries carr
 |---|---|
 | The pane keeps saying "Disconnected, reconnecting…" | The gateway is an older version without the browser relay route. Restart the gateway |
 | The pane says "This workspace has no browser yet" | The workspace was created by an older gateway and has no port 3081 published. Sign out and back in, or restart the workspace from the admin console |
-| No "Browser preview" in the right sidebar | The plugin is not assigned to this user or their group (flagged in red in the plugin list), or the workspace has not restarted since |
+| No "Remote browser" in the right sidebar | The plugin is not assigned to this user or their group (flagged in red in the plugin list), or the workspace has not restarted since |
 | The agent says it has no browser tools | Same as above; or the install before dsh's start failed: check `docker logs <container> \| grep provision` |
 | The view is blank | The browser just started and is still on `about:blank`; enter a URL, or let the agent open a page |
 | "Content Exists Risk" | DeepSeek's API content moderation refused the request (possibly triggered by page content), not this feature; retry in a new session, or use another source |
@@ -194,7 +194,7 @@ sandbox-image/base/
     ├── package.json              dsh.bundle + dsh.client; the version decides updates
     ├── cordis.patch.yml          the Playwright MCP row + the plugin row
     ├── index.js                  host face (empty)
-    └── client.js                 the right-sidebar "Browser preview"
+    └── client.js                 the right-sidebar "Remote browser"
 gateway/dsh_gateway/
 ├── app.py                        the /u/<user>/_dsh-cloud/browser route
 ├── proxy.py                      relay_websocket

@@ -110,8 +110,8 @@ BUILTIN_PLUGINS = (
     {
         "key": "workspace-browser",
         "kind": "bundle",
-        "name": "工作空间浏览器",
-        "description": "Agent 通过 Playwright MCP 操作工作空间里的 Chromium；用户在右侧边栏实时查看并接管",
+        "name": "远程浏览器",
+        "description": "Agent 通过 Playwright MCP 操作工作空间里的 Chromium；用户在右侧边栏「远程浏览器」里实时查看并接管",
         "config": {"spec": "file:/usr/local/lib/dsh-cloud/workspace-browser"},
     },
     {
