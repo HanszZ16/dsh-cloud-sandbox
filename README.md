@@ -87,7 +87,8 @@ dsh-cloud-sandbox/
 │   ├── build.sh                   Builds the base image, then every team image in variants/ FROM it
 │   ├── base/                      Base image (also the default image)
 │   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + CJK fonts, user agent, compatibility labels
-│   │   ├── entrypoint.sh          Install MCP packages → start the browser hub and dsh (with the admin overlay) → install default plugins in the background; forwards stop signals to both
+│   │   ├── entrypoint.sh          Install MCP packages → prepare ~/workspaces → start the browser hub and dsh (with the workspace layout patch and the admin overlay) → install default plugins in the background; forwards stop signals to both
+│   │   ├── workspace.cordis.yml   dsh patch: a new user's first project is ~/workspaces/default-workspace
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
 │   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Workspace browser"
 │   │   ├── plugins/rag-kb/        Knowledge base plugin (our fork of @puwenhui/dsh-rag-kb), shipped in the image
@@ -209,7 +210,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 1. Open http://localhost:8000 and sign in as `admin` with `GATEWAY_ADMIN_PASSWORD`;
 2. In the workspace, open **More** at the bottom of the left sidebar → **管理后台 (Admin console) → Users**, and create a regular user;
 3. Sign out and sign in as the new user: the loading page shows "preparing your workspace" and enters dsh after a few seconds;
-4. On first entry dsh shows a preview notice; click Continue. When asked for a workspace directory, click **Open** (that is `/home/agent`);
+4. On first entry dsh shows a preview notice; click Continue. A new user starts in the project `~/workspaces/default-workspace` (labeled Default workspace) without choosing a directory;
 5. Send a message. "Model requests today" on the admin **Overview** goes up.
 
 ### Upgrading from the earlier version
@@ -360,6 +361,8 @@ Notes:
 ## Where user data lives
 
 `/home/agent` in the sandbox is the user's whole computer and is saved and restored as one unit.
+
+**Projects** live in `/home/agent/workspaces/<name>`. A new user's first project, `~/workspaces/default-workspace`, is created and opened by dsh on first entry; **Add workspace** opens the directory dialog at the home directory, where `workspaces` is the only visible folder, and new projects are created inside it. The agent works in the open project's directory and the Files panel shows only that project. The image sets this up through `sandbox-image/base/workspace.cordis.yml` (dsh's first-use Documents directory) and the entrypoint, which links `~/.dsh-cloud/documents/deepseek-harness` to `~/workspaces`. Users who registered a workspace before this layout (for example `/home/agent` itself) keep it; they can add projects under `~/workspaces` the same way. The directory dialog can still go above the home directory: anything created outside `/home/agent` is lost when the workspace sleeps.
 
 | Data | Location | Persistent? |
 |---|---|---|
@@ -571,7 +574,7 @@ docker exec -it <container> bash
 - **Egress and credentials**: restrict sandbox egress (allow-list); proxy MCP services that need secrets through the gateway so credentials stay out of sandboxes;
 - **Usage**: limits are per request and tokens are only counted; token quotas and billing can follow;
 - **Multiple instances**: sandbox state is in the gateway's memory; several gateways serving the same users need it in Redis or a database with distributed locks (`GATEWAY_INSTANCE_ID` only keeps gateways from reaping each other);
-- **Experience**: dsh asks for a directory on first entry; installation progress of preinstalled plugins is only in container logs; opening a deep link when dsh needs a new cookie lands on dsh's home page instead of the link;
+- **Experience**: installation progress of preinstalled plugins is only in container logs; opening a deep link when dsh needs a new cookie lands on dsh's home page instead of the link;
 - **Capacity**: add a warm pool to cut cold-start time;
 - **dsh menu injection**: the account entries depend on the DOM of dsh's More menu (the trigger's `data-signed-out`, items with `role="menuitem"`, the Sign in label). If a dsh update leaves the menu without account settings and sign-out, adjust `web/public/dsh-cloud-overlay.js`;
 - **dsh version**: verified with `@deepseek-ai/dsh@0.2.1-rc.2`; dsh is still in preview, so after upgrading re-verify the reverse proxy, the launch-token flow, `--patch`, and `dsh plugin add`, and refresh the design tokens in `web/src/theme/`.

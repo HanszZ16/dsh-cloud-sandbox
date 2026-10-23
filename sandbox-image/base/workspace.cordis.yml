@@ -1,0 +1,9 @@
+# dsh-cloud workspace layout, applied to every sandbox before the gateway's
+# admin overlay. Projects live in /home/agent/workspaces/<name>. dsh creates a
+# new user's first Workspace at <documentsDirectory>/deepseek-harness/
+# default-workspace; the entrypoint links that deepseek-harness directory to
+# /home/agent/workspaces, so the first project is
+# /home/agent/workspaces/default-workspace (dsh registers the resolved path).
+- id: workspace-controller
+  config:
+    documentsDirectory: /home/agent/.dsh-cloud/documents

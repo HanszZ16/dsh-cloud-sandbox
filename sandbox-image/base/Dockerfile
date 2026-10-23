@@ -70,6 +70,7 @@ COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
 # the gateway registers it and rag-kb as built-in plugins.
 COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
+COPY workspace.cordis.yml /usr/local/lib/dsh-cloud/workspace.cordis.yml
 COPY provision.py /usr/local/lib/dsh-cloud/provision.py
 # The pnpm content store lives outside /home/agent: installed plugins are
 # persisted through their node_modules copies, not through the cache.

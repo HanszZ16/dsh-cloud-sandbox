@@ -86,7 +86,8 @@ dsh-cloud-sandbox/
 │   ├── build.sh                   先构建基础镜像，再基于它构建 variants/ 下的每个团队镜像
 │   ├── base/                      基础镜像（也是默认镜像）
 │   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + 中文字体，用户 agent，兼容性标签
-│   │   ├── entrypoint.sh          安装 MCP 包 → 启动浏览器中转服务和 dsh（带管理员 overlay）→ 后台安装默认插件；停止时把信号转给两者
+│   │   ├── entrypoint.sh          安装 MCP 包 → 准备 ~/workspaces → 启动浏览器中转服务和 dsh（带工作区布局补丁和管理员 overlay）→ 后台安装默认插件；停止时把信号转给两者
+│   │   ├── workspace.cordis.yml   dsh 补丁：新用户的第一个项目是 ~/workspaces/default-workspace
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
 │   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「工作空间浏览器」
 │   │   ├── plugins/rag-kb/        知识库插件（@puwenhui/dsh-rag-kb 的 fork），装在镜像里
@@ -208,7 +209,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 1. 打开 http://localhost:8000 ，用 `admin` 和 `GATEWAY_ADMIN_PASSWORD` 登录；
 2. 进入工作空间后，点左侧栏底部的 **More** → **管理后台 → 用户**，新建一个普通用户；
 3. 退出，用新用户登录：加载页显示"正在准备你的工作空间"，几秒后自动进入 dsh；
-4. 第一次进入时 dsh 会显示预览说明，点 Continue；选择工作区时直接点 **Open**（即 `/home/agent`）；
+4. 第一次进入时 dsh 会显示预览说明，点 Continue；新用户直接进入项目 `~/workspaces/default-workspace`（显示为「默认工作区」），不用选择目录；
 5. 发一条消息。管理后台**概览**里的"今日模型请求"会增加。
 
 ### 从旧版本升级
@@ -359,6 +360,8 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 ## 用户数据存在哪里
 
 沙箱里的 `/home/agent` 就是用户的整台电脑，作为一个整体保存和恢复。
+
+**项目**放在 `/home/agent/workspaces/<项目名>`。新用户第一次进入时，dsh 会自动创建并打开第一个项目 `~/workspaces/default-workspace`；点 **添加工作区** 时，选择目录的对话框从 home 开始，那里唯一可见的文件夹就是 `workspaces`，新项目建在它里面。agent 在当前打开的项目目录里工作，文件面板也只显示这个项目。这是由镜像里的 `sandbox-image/base/workspace.cordis.yml`（指定 dsh 首次使用时的"文档"目录）和启动脚本（把 `~/.dsh-cloud/documents/deepseek-harness` 链接到 `~/workspaces`）实现的。在这之前已经登记过工作区的用户（比如直接用 `/home/agent` 的），原来的工作区保持不变，也可以用同样的方式在 `~/workspaces` 下新建项目。选择目录的对话框仍然可以往上翻到 home 以外：建在 `/home/agent` 以外的东西，工作空间休眠后就没了。
 
 | 数据 | 位置 | 是否持久 |
 |---|---|---|
@@ -570,7 +573,7 @@ docker exec -it <容器名> bash
 - **出网与凭据**：限制沙箱出网（白名单）；需要保密的 MCP 服务由网关代理，凭据不进沙箱；
 - **用量**：目前按请求次数限额、按 token 统计；可以加 token 配额和计费；
 - **多实例**：网关的沙箱状态在内存里，多个网关共同服务同一批用户时需要把状态移到 Redis/数据库并加分布式锁（`GATEWAY_INSTANCE_ID` 只解决了互不回收）；
-- **体验**：dsh 第一次进入时要手动选择目录；预装插件的安装进度只在容器日志里，用户看不到；用户打开深层链接时如果 dsh 需要重新换 cookie，会回到 dsh 首页而不是原链接；
+- **体验**：预装插件的安装进度只在容器日志里，用户看不到；用户打开深层链接时如果 dsh 需要重新换 cookie，会回到 dsh 首页而不是原链接；
 - **规格**：加预热池降低冷启动时间；
 - **dsh 菜单注入**：账号入口依赖 dsh More 菜单的 DOM（触发按钮的 `data-signed-out`、菜单项 `role="menuitem"`、Sign in 的文字）。dsh 改版后若菜单里看不到账号设置和退出登录，需要调整 `web/public/dsh-cloud-overlay.js`；
 - **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.1-rc.2` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。
