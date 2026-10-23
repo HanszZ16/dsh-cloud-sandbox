@@ -228,12 +228,19 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
         if request.url.query:
             url += f"?{request.url.query}"
         client: httpx.AsyncClient = request.app.state.llm_http
-        upstream = await client.send(client.build_request(request.method, url, headers=headers, content=body), stream=True)
+        try:
+            upstream = await client.send(client.build_request(request.method, url, headers=headers, content=body), stream=True)
+        except httpx.HTTPError as err:
+            # dsh retries a 5xx; the message reaches the user if the retries also fail.
+            log.warning("model API request %s failed: %s: %s", path, type(err).__name__, err)
+            return _llm_error(502, f"the gateway could not reach the model API ({type(err).__name__}); try again")
         passthrough = {
             k: v for k, v in upstream.headers.items()
             if k.lower() not in {"content-length", "transfer-encoding", "connection", "set-cookie", "content-encoding"}
         }
-        chunks = upstream.aiter_bytes() if meter is None else meter.observe(upstream.aiter_bytes())
+        chunks = _until_upstream_fails(upstream.aiter_bytes(), path)
+        if meter is not None:
+            chunks = meter.observe(chunks)
         return StreamingResponse(
             chunks, status_code=upstream.status_code, headers=passthrough, background=BackgroundTask(upstream.aclose)
         )
@@ -290,6 +297,18 @@ def _model_of(body: bytes) -> str | None:
         # Not a JSON object: the upstream rejects it; there is no model to check.
         return None
     return value if isinstance(value, str) else None
+
+
+async def _until_upstream_fails(chunks, path: str):
+    """Relay a model response; a connection lost mid-response ends the body instead of raising.
+
+    The truncated stream lacks its end event, so dsh treats the turn as failed and retries.
+    """
+    try:
+        async for chunk in chunks:
+            yield chunk
+    except httpx.HTTPError as err:
+        log.warning("model API response %s ended early: %s: %s", path, type(err).__name__, err)
 
 
 def _llm_error(status: int, message: str) -> JSONResponse:

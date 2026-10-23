@@ -139,6 +139,34 @@ def test_model_proxy_uses_user_key_and_enforces_group_limits(client, backend, mo
     assert client.post("/llm/anthropic/v1/messages", headers={"x-api-key": "dshgw-forged"}, json={}).status_code == 401
 
 
+def test_model_api_network_failures_become_errors_dsh_can_retry(client, backend, monkeypatch):
+    login(client, "root", "rootpass1")
+    client.put("/api/me/api-key", json={"api_key": "sk-user-own-key-9999"})
+    client.post("/api/me/sandbox/start")
+    (spec,) = backend.live.values()
+    headers = {"x-api-key": spec.env["DEEPSEEK_API_KEY"]}
+
+    async def unreachable(request, stream=False):
+        raise httpx.ReadError("[SSL] record layer failure", request=request)
+
+    monkeypatch.setattr(client.app.state.llm_http, "send", unreachable)
+    failed = client.post("/llm/anthropic/v1/messages", headers=headers, json={"model": "deepseek-chat"})
+    assert failed.status_code == 502
+    assert "ReadError" in failed.json()["error"]["message"]
+
+    class Dropped(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"type":"message_start","message":{"usage":{"input_tokens":7}}}\n\n'
+            raise httpx.ReadError("connection reset")
+
+    async def drops_midway(request, stream=False):
+        return httpx.Response(200, stream=Dropped(), headers={"content-type": "text/event-stream"}, request=request)
+
+    monkeypatch.setattr(client.app.state.llm_http, "send", drops_midway)
+    partial = client.post("/llm/anthropic/v1/messages", headers=headers, json={"model": "deepseek-chat"})
+    assert partial.status_code == 200 and partial.content.startswith(b"data: ")
+
+
 async def test_usage_meter_reads_plain_json_bodies():
     recorded = []
     meter = UsageMeter(lambda i, o: recorded.append((i, o)))
