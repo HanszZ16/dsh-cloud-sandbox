@@ -90,7 +90,7 @@ dsh-cloud-sandbox/
 │   │   ├── entrypoint.sh          Install MCP packages → prepare ~/workspaces → start the browser hub and dsh (with the workspace layout patch and the admin overlay) → install default plugins in the background; forwards stop signals to both
 │   │   ├── workspace.cordis.yml   dsh patch: a new user's first project is ~/workspaces/default-workspace
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
-│   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Workspace browser"
+│   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Remote browser"
 │   │   ├── plugins/rag-kb/        Knowledge base plugin (our fork of @puwenhui/dsh-rag-kb), shipped in the image
 │   │   └── provision.py           Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
 │   └── variants/

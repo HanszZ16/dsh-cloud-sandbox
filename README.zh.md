@@ -89,7 +89,7 @@ dsh-cloud-sandbox/
 │   │   ├── entrypoint.sh          安装 MCP 包 → 准备 ~/workspaces → 启动浏览器中转服务和 dsh（带工作区布局补丁和管理员 overlay）→ 后台安装默认插件；停止时把信号转给两者
 │   │   ├── workspace.cordis.yml   dsh 补丁：新用户的第一个项目是 ~/workspaces/default-workspace
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
-│   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「工作空间浏览器」
+│   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「远程浏览器」
 │   │   ├── plugins/rag-kb/        知识库插件（@puwenhui/dsh-rag-kb 的 fork），装在镜像里
 │   │   └── provision.py           按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
 │   └── variants/
