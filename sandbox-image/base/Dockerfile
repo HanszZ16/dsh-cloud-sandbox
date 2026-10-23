@@ -64,10 +64,13 @@ RUN cd /usr/local/lib/dsh-cloud/plugins/rag-kb \
  && npm install --registry "$NPM_REGISTRY" --omit=dev --legacy-peer-deps --ignore-scripts --no-package-lock --no-fund --no-audit \
  && npm cache clean --force
 COPY plugins/rag-kb /usr/local/lib/dsh-cloud/plugins/rag-kb
+# The Files panel's upload button; no dependencies, provisioned like rag-kb
+# with link:/usr/local/lib/dsh-cloud/plugins/workspace-upload.
+COPY plugins/workspace-upload /usr/local/lib/dsh-cloud/plugins/workspace-upload
 COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
 # The workspace browser dsh bundle (live-view tab + the Playwright MCP row),
 # provisioned with the spec file:/usr/local/lib/dsh-cloud/workspace-browser;
-# the gateway registers it and rag-kb as built-in plugins.
+# the gateway registers it, rag-kb, and workspace-upload as built-in plugins.
 COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
 COPY defaults.cordis.yml /usr/local/lib/dsh-cloud/defaults.cordis.yml

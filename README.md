@@ -26,6 +26,7 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Images: different software per group](#images-different-software-per-group)
 - [Workspace browser: watch and take over the agent's browser](#workspace-browser-watch-and-take-over-the-agents-browser)
 - [Knowledge base (RAG)](#knowledge-base-rag)
+- [Uploading files into a workspace](#uploading-files-into-a-workspace)
 - [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
 - [Where user data lives](#where-user-data-lives)
 - [Sandbox lifecycle](#sandbox-lifecycle)
@@ -92,6 +93,7 @@ dsh-cloud-sandbox/
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
 │   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Remote browser"
 │   │   ├── plugins/rag-kb/        Knowledge base plugin (our fork of @puwenhui/dsh-rag-kb), shipped in the image
+│   │   ├── plugins/workspace-upload/  Upload button in the Files panel, shipped in the image
 │   │   └── provision.py           Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
 │   └── variants/
 │       └── data-science/Dockerfile Example team image: the base plus numpy, pandas, scipy, matplotlib, scikit-learn
@@ -310,7 +312,7 @@ Each workspace has a knowledge base: users upload documents (PDF, DOCX, Markdown
 
 The plugin is `sandbox-image/base/plugins/rag-kb`, our fork of [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb) 0.3.1 (MIT); its [README](sandbox-image/base/plugins/rag-kb/README.md) lists what changed.
 
-**Enabling it:** it is a built-in plugin: the gateway registers it in **Plugins & MCP** (spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`) and assigns it to the default group when its database is created or upgraded. Assign it to other groups or users there, or unassign it to turn it off; restart the affected workspaces either way. The gateway registers the built-in plugins once: an entry an admin deleted is not added back, and an entry an admin registered earlier under the same key (`workspace-browser`, `rag-kb`) is kept as it is.
+**Enabling it:** it is a built-in plugin: the gateway registers it in **Plugins & MCP** (spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`) and assigns it to the default group when its database is created or upgraded. Assign it to other groups or users there, or unassign it to turn it off; restart the affected workspaces either way. The gateway registers the built-in plugins once: an entry an admin deleted is not added back, and an entry an admin registered earlier under the same key (`workspace-browser`, `rag-kb`, `workspace-upload`) is kept as it is.
 
 **Managing documents:**
 
@@ -337,6 +339,24 @@ Verified in a test workspace: uploads from the panel (Markdown, TXT; a `.exe` an
 - Keep the reranker off unless needed: it downloads a model of about 1 GB at first use (from `modelHost`, Hugging Face by default) and needs more memory.
 - Quota is checked per upload against the total size of the user's documents; two uploads sent at the same moment can together exceed it by up to one file.
 - Settings saved in the panel go into the user's profile; `knowledgeDir`, the model source, and `maxFileBytes` are plugin config fields an admin can set with a config patch, and apply at the next start.
+
+## Uploading files into a workspace
+
+The Files panel (**Workspace files** in the right sidebar) has an upload button next to its refresh button. It offers **Upload files** (several at once, any type) and **Upload folder** (the folder with its subfolders; empty folders are not sent). Files go to the root of the conversation's project, the directory the panel shows, and the tree refreshes by itself. When names already exist, the panel asks once for all of them: **Keep both** (the new file becomes `report (1).pdf`), **Replace**, **Skip**, or **Cancel**. It shows progress across the files and can cancel; failures are listed with their reason.
+
+The plugin is `sandbox-image/base/plugins/workspace-upload`, a built-in plugin like the knowledge base (spec `link:/usr/local/lib/dsh-cloud/plugins/workspace-upload`, key `workspace-upload`), registered and assigned to the default group when the gateway's database is created or upgraded to schema 4. It has no dependencies of its own.
+
+- **Path:** browser → gateway → the plugin's route in the user's dsh. The gateway checks the sign-in and the file size (`UPLOAD_MAX_MB`, default 200) before any byte reaches the workspace; the plugin applies its own `maxFileBytes` (default 200 MB) as well.
+- **Where files land:** the plugin reads the conversation's working directory from dsh itself; the browser only names the conversation and a path relative to that directory. Paths with `..`, absolute paths, and paths through a symbolic link that leads out of the project are refused.
+- **Interrupted uploads:** each file is written to a hidden `.dsh-upload-….part` file beside its target and moved into place once complete, so a broken connection leaves nothing behind. A file that appears with the same name in the meantime is never overwritten unless **Replace** was chosen.
+
+**Limits:**
+
+- Files go to the project root; the panel offers no target folder, because dsh's file tree does not tell plugins which folder is selected. Move files afterwards in the terminal or ask the agent.
+- No drag and drop onto the file tree: the tree belongs to dsh.
+- dsh's web server ends a request after 5 minutes (Node.js's default `requestTimeout`), so one file must arrive within that time: about 0.7 MB/s for a 200 MB file.
+- No total quota yet. Until per-user volumes arrive, every uploaded byte is part of the snapshot taken when the workspace sleeps, so large files make sleep and resume slower.
+- A user whose project is `/home/agent` itself (one registered before projects moved to `~/workspaces`) uploads into the home directory.
 
 ## Provisioning plugins, MCP servers, and config patches
 
@@ -489,6 +509,7 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 | `SANDBOX_HTTP_PROXY` | Empty | Egress proxy for sandboxes (plugin and npm installs, web tools), e.g. `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | Default group's initial resources |
 | `KB_MAX_FILE_MB` / `KB_QUOTA_MB` | `50` / `500` | Knowledge base uploads: largest file, and the total one user's documents may hold |
+| `UPLOAD_MAX_MB` | `200` | Files panel uploads into a workspace: largest file |
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | Default group's initial idle timeout and maximum lifetime |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | Reaper interval |
 | `SANDBOX_START_TIMEOUT_S` | `600` | How long to wait for dsh to start (including first-time MCP package installs) |

@@ -1,0 +1,7 @@
+# dsh-cloud workspace upload bundle: one host row (the check and upload
+# routes) whose package also serves the client face (the Files panel's upload
+# button). maxFileBytes (default 200 MB) caps one file; the dsh-cloud gateway
+# applies its own UPLOAD_MAX_MB before a byte reaches the sandbox.
+- insert:
+    - id: workspace-upload
+      name: dsh-cloud-workspace-upload

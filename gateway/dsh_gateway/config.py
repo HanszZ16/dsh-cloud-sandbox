@@ -51,6 +51,8 @@ class Settings:
     # Knowledge base uploads: largest file, and the most a user's documents may hold.
     kb_max_file_bytes: int = 50 * 1024 * 1024
     kb_quota_bytes: int = 500 * 1024 * 1024
+    # Files panel uploads into a workspace: largest file.
+    upload_max_file_bytes: int = 200 * 1024 * 1024
 
     @property
     def public_hostname(self) -> str:
@@ -104,4 +106,5 @@ def load_settings() -> Settings:
         sandbox_env=_sandbox_env(callback),
         kb_max_file_bytes=int(float(os.environ.get("KB_MAX_FILE_MB", "50")) * 1024 * 1024),
         kb_quota_bytes=int(float(os.environ.get("KB_QUOTA_MB", "500")) * 1024 * 1024),
+        upload_max_file_bytes=int(float(os.environ.get("UPLOAD_MAX_MB", "200")) * 1024 * 1024),
     )

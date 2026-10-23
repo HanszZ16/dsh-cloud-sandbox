@@ -26,6 +26,7 @@ dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek
 - [镜像：按用户组提供不同的软件](#镜像按用户组提供不同的软件)
 - [工作空间浏览器：实时查看并接管 agent 的浏览器](#工作空间浏览器实时查看并接管-agent-的浏览器)
 - [知识库（RAG）](#知识库rag)
+- [上传文件到工作空间](#上传文件到工作空间)
 - [插件、MCP 与配置补丁的下发](#插件mcp-与配置补丁的下发)
 - [用户数据存在哪里](#用户数据存在哪里)
 - [沙箱生命周期](#沙箱生命周期)
@@ -91,6 +92,7 @@ dsh-cloud-sandbox/
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
 │   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「远程浏览器」
 │   │   ├── plugins/rag-kb/        知识库插件（@puwenhui/dsh-rag-kb 的 fork），装在镜像里
+│   │   ├── plugins/workspace-upload/  文件面板的上传按钮，装在镜像里
 │   │   └── provision.py           按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
 │   └── variants/
 │       └── data-science/Dockerfile 示例团队镜像：基础镜像 + numpy、pandas、scipy、matplotlib、scikit-learn
@@ -309,7 +311,7 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 
 插件在 `sandbox-image/base/plugins/rag-kb`，是 [`@puwenhui/dsh-rag-kb`](https://github.com/Puwenhui-Me/dsh-rag-kb) 0.3.1（MIT）的 fork，改动见它的 [README](sandbox-image/base/plugins/rag-kb/README.md)。
 
-**开启方法：** 这是内置插件：网关在创建或升级数据库时，会把它登记到 **插件与 MCP**（spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`）并分配给默认用户组。要给其他用户组或用户开启，或者取消分配来关闭，都在那里操作，改完重启受影响的工作空间。内置插件只登记一次：管理员删掉的条目不会再加回来；管理员之前用相同 key（`workspace-browser`、`rag-kb`）登记过的条目保持原样。
+**开启方法：** 这是内置插件：网关在创建或升级数据库时，会把它登记到 **插件与 MCP**（spec `link:/usr/local/lib/dsh-cloud/plugins/rag-kb`）并分配给默认用户组。要给其他用户组或用户开启，或者取消分配来关闭，都在那里操作，改完重启受影响的工作空间。内置插件只登记一次：管理员删掉的条目不会再加回来；管理员之前用相同 key（`workspace-browser`、`rag-kb`、`workspace-upload`）登记过的条目保持原样。
 
 **管理文档：**
 
@@ -336,6 +338,24 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 - 没有需要就别开 reranker：首次使用会从 `modelHost`（默认 Hugging Face）下载约 1 GB 的模型，并占用更多内存。
 - 配额在每次上传时按用户文档的总大小检查；两个上传同时发出时，合计最多可能超出一个文件的大小。
 - 面板里保存的设置写在用户自己的 profile 里；`knowledgeDir`、模型来源和 `maxFileBytes` 是插件的配置项，管理员可以用配置补丁设置，下次启动生效。
+
+## 上传文件到工作空间
+
+文件面板（右侧边栏的 **工作区文件**）的刷新按钮旁边有一个上传按钮，可以选 **上传文件**（一次多选，任何类型）或 **上传文件夹**（连同子文件夹一起；空文件夹不会上传）。文件会传到当前会话所在项目的根目录，也就是面板显示的那个目录，文件树会自动刷新。如果有同名文件，面板会一次性问你怎么处理：**保留两个**（新文件改名为 `报告 (1).pdf`）、**覆盖**、**跳过** 或 **取消**。上传时显示总进度，可以取消；失败的文件会列出原因。
+
+插件在 `sandbox-image/base/plugins/workspace-upload`，和知识库一样是内置插件（spec `link:/usr/local/lib/dsh-cloud/plugins/workspace-upload`，key `workspace-upload`）。网关在创建数据库或升级到 schema 4 时登记它，并分配给默认用户组。它没有自己的依赖包。
+
+- **上传路径：** 浏览器 → 网关 → 用户 dsh 里插件的接口。网关先检查登录和单个文件大小（`UPLOAD_MAX_MB`，默认 200），不合格的请求一个字节都不会进工作空间；插件自己也有一道 `maxFileBytes`（默认 200 MB）检查。
+- **文件存到哪里：** 插件从 dsh 自己那里读出会话的工作目录；浏览器只告诉它是哪个会话、以及相对这个目录的路径。带 `..` 的路径、绝对路径、经过指向项目外面的符号链接的路径，都会被拒绝。
+- **上传中断：** 每个文件先写到目标旁边一个隐藏的 `.dsh-upload-….part` 文件，完整收到后才改成正式文件名，所以连接断了不会留下残缺文件。上传期间如果冒出一个同名文件，除非选了 **覆盖**，否则不会被覆盖。
+
+**限制：**
+
+- 只能传到项目根目录，不能选目标文件夹，因为 dsh 的文件树不会告诉插件当前选中的是哪个文件夹。需要的话，传完在终端里移动，或者让 agent 移动。
+- 不支持把文件拖进文件树：文件树是 dsh 的。
+- dsh 的 web 服务会在 5 分钟后结束一个请求（Node.js 默认的 `requestTimeout`），所以单个文件要在 5 分钟内传完：200 MB 的文件大约需要 0.7 MB/s。
+- 暂时没有总容量上限。在换成每用户一块持久卷之前，上传的所有内容都会进休眠时的快照，大文件会让休眠和恢复变慢。
+- 项目就是 `/home/agent` 本身的用户（在项目改到 `~/workspaces` 之前登记的），文件会传到 home 目录。
 
 ## 插件、MCP 与配置补丁的下发
 
@@ -488,6 +508,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | `SANDBOX_HTTP_PROXY` | 空 | 沙箱出网代理（安装插件、npm 包、联网工具），例如 `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | 默认用户组的初始资源 |
 | `KB_MAX_FILE_MB` / `KB_QUOTA_MB` | `50` / `500` | 知识库上传：单个文件上限，以及一个用户的文档总量上限 |
+| `UPLOAD_MAX_MB` | `200` | 文件面板上传到工作空间：单个文件上限 |
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | 默认用户组的初始空闲时限和最长运行时间 |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | 回收检查间隔 |
 | `SANDBOX_START_TIMEOUT_S` | `600` | 等待 dsh 启动的最长时间（包括首次安装 MCP 包） |

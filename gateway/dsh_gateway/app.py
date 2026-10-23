@@ -29,7 +29,7 @@ from .backends import SandboxBackend, create_backend
 from .config import Settings, load_settings
 from .db import Database
 from .gateway import Gateway
-from .manager import SandboxManager
+from .manager import SandboxManager, SandboxRecord
 from .proxy import forward_http, forward_websocket, relay_websocket, upstream_json
 from .store import LocalStateStore
 from .usage import UsageMeter
@@ -82,7 +82,24 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
     async def mount_root(user_id: str) -> RedirectResponse:
         return RedirectResponse(f"/u/{user_id}/", status_code=307)
 
-    # Knowledge base routes, registered before the catch-all that forwards /u/<user>/... to dsh.
+    def upload_target(request: Request, user_id: str, max_bytes: int) -> tuple[SandboxRecord | None, JSONResponse | None]:
+        """The signed-in owner's running workspace for an upload of at most `max_bytes`, or the refusal."""
+        gw = gw_of(request)
+        user = gw.session_user(request)
+        if user is None or user.username != user_id:
+            return None, JSONResponse({"detail": "not signed in"}, status_code=401)
+        record = gw.manager.get(user.username)
+        if record is None:
+            return None, JSONResponse({"detail": "workspace is asleep"}, status_code=503)
+        record.touch()
+        length = request.headers.get("content-length", "")
+        if not length.isdigit():
+            return None, JSONResponse({"code": "length-required", "detail": "Content-Length is required"}, status_code=411)
+        if int(length) > max_bytes:
+            return None, JSONResponse({"code": "too-large", "limit": max_bytes}, status_code=413)
+        return record, None
+
+    # Upload routes, registered before the catch-all that forwards /u/<user>/... to dsh.
     @app.get("/u/{user_id}/_dsh-cloud/kb/limits")
     async def kb_limits(request: Request, user_id: str):
         """Upload limits the knowledge base panel shows and checks before sending."""
@@ -94,28 +111,35 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
     @app.post("/u/{user_id}/api/dshCloudKb/upload")
     async def kb_upload(request: Request, user_id: str):
         """A knowledge base upload: refused before any byte reaches the sandbox when it is too large."""
-        gw = gw_of(request)
-        user = gw.session_user(request)
-        if user is None or user.username != user_id:
-            return JSONResponse({"detail": "not signed in"}, status_code=401)
-        record = gw.manager.get(user.username)
-        if record is None:
-            return JSONResponse({"detail": "workspace is asleep"}, status_code=503)
-        record.touch()
-        length = request.headers.get("content-length", "")
-        if not length.isdigit():
-            return JSONResponse({"code": "length-required", "detail": "Content-Length is required"}, status_code=411)
-        if int(length) > settings.kb_max_file_bytes:
-            return JSONResponse({"code": "too-large", "limit": settings.kb_max_file_bytes}, status_code=413)
+        record, refused = upload_target(request, user_id, settings.kb_max_file_bytes)
+        if refused is not None:
+            return refused
+        length = request.headers["content-length"]
         client = request.app.state.sandbox_http
         try:
             used = int((await upstream_json(request, client, record, "api/dshCloudKb/documents"))["usedBytes"])
         except (httpx.HTTPError, KeyError, TypeError, ValueError) as err:
-            log.warning("knowledge base usage of %s unavailable: %s", user.username, err)
+            log.warning("knowledge base usage of %s unavailable: %s", user_id, err)
             return JSONResponse({"detail": "knowledge base is unavailable"}, status_code=503)
         if used + int(length) > settings.kb_quota_bytes:
             return JSONResponse({"code": "quota", "quotaBytes": settings.kb_quota_bytes, "usedBytes": used}, status_code=413)
         return await forward_http(request, client, record, "api/dshCloudKb/upload", f"/u/{user_id}/")
+
+    @app.get("/u/{user_id}/_dsh-cloud/files/limits")
+    async def files_limits(request: Request, user_id: str):
+        """The upload limit the Files panel's upload button shows and checks before sending."""
+        user = gw_of(request).session_user(request)
+        if user is None or user.username != user_id:
+            return JSONResponse({"detail": "not signed in"}, status_code=401)
+        return {"maxFileBytes": settings.upload_max_file_bytes}
+
+    @app.post("/u/{user_id}/api/dshCloudFiles/upload")
+    async def files_upload(request: Request, user_id: str):
+        """A Files panel upload: refused before any byte reaches the sandbox when it is too large."""
+        record, refused = upload_target(request, user_id, settings.upload_max_file_bytes)
+        if refused is not None:
+            return refused
+        return await forward_http(request, request.app.state.sandbox_http, record, "api/dshCloudFiles/upload", f"/u/{user_id}/")
 
     @app.api_route("/u/{user_id}/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
     async def sandbox_http(request: Request, user_id: str, path: str):

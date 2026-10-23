@@ -1,0 +1,25 @@
+{
+  "name": "dsh-cloud-workspace-upload",
+  "version": "1.0.0",
+  "description": "Upload files and folders into a dsh-cloud workspace from the Files panel.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar-files",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  }
+}

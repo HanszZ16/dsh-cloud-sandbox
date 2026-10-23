@@ -252,10 +252,10 @@ def test_version_1_database_is_migrated(tmp_path):
     (group,) = db.list_groups()
     assert group["name"] == "default" and group["image_id"] is None
     assert db.list_images() == []
-    assert sorted(p["key"] for p in db.list_plugins()) == ["rag-kb", "workspace-browser"]
-    assert len(group["plugin_ids"]) == 2
+    assert sorted(p["key"] for p in db.list_plugins()) == ["rag-kb", "workspace-browser", "workspace-upload"]
+    assert len(group["plugin_ids"]) == 3
     db.close()
-    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 3
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_built_in_plugins_are_registered_once_and_keep_admin_edits(tmp_path):
@@ -285,11 +285,29 @@ def test_built_in_plugins_are_registered_once_and_keep_admin_edits(tmp_path):
     plugins = {p["key"]: p for p in db.list_plugins()}
     assert plugins["rag-kb"]["config"] == {"spec": "@puwenhui/dsh-rag-kb"}
     (group,) = db.list_groups()
-    assert group["plugin_ids"] == [plugins["workspace-browser"]["id"]]
+    assert group["plugin_ids"] == [plugins["workspace-browser"]["id"], plugins["workspace-upload"]["id"]]
 
     db.delete_plugin(plugins["workspace-browser"]["id"])
     db.close()
-    assert [p["key"] for p in Database(path).list_plugins()] == ["rag-kb"]
+    assert [p["key"] for p in Database(path).list_plugins()] == ["rag-kb", "workspace-upload"]
+
+
+def test_an_upgrade_adds_only_the_built_in_plugins_its_version_introduced(tmp_path):
+    from dsh_gateway.db import Database
+
+    path = tmp_path / "gateway.db"
+    db = Database(path)
+    group_id = db.ensure_default_group({"mem_limit": "2g", "cpus": 2, "idle_timeout_s": 900, "max_lifetime_s": 3600})
+    plugins = {p["key"]: p["id"] for p in db.list_plugins()}
+    # An admin took the knowledge base away from everyone and deleted the upload plugin, on schema 3.
+    db.set_group_plugins(group_id, [plugins["workspace-browser"]])
+    db.delete_plugin(plugins["workspace-upload"])
+    db._conn.execute("PRAGMA user_version=3")
+    db.close()
+
+    db = Database(path)
+    plugins = {p["key"]: p["id"] for p in db.list_plugins()}
+    assert sorted(plugins[k] for k in ("workspace-browser", "workspace-upload")) == sorted(db.get_group(group_id)["plugin_ids"])
 
 
 def test_a_new_gateway_gives_the_default_group_the_built_in_plugins(tmp_path):
@@ -298,7 +316,7 @@ def test_a_new_gateway_gives_the_default_group_the_built_in_plugins(tmp_path):
     db = Database(tmp_path / "gateway.db")
     group_id = db.ensure_default_group({"mem_limit": "2g", "cpus": 2, "idle_timeout_s": 900, "max_lifetime_s": 3600})
     keys = {p["id"]: p["key"] for p in db.list_plugins()}
-    assert sorted(keys[i] for i in db.get_group(group_id)["plugin_ids"]) == ["rag-kb", "workspace-browser"]
+    assert sorted(keys[i] for i in db.get_group(group_id)["plugin_ids"]) == ["rag-kb", "workspace-browser", "workspace-upload"]
 
 
 def test_workspace_browser_socket_is_for_the_owner_only(client):
@@ -321,6 +339,32 @@ def test_knowledge_base_uploads_are_checked_before_they_reach_the_workspace(tmp_
     )
     with TestClient(create_app(settings, backend)) as client:
         check_knowledge_base_uploads(client)
+
+
+def test_files_panel_uploads_are_checked_before_they_reach_the_workspace(tmp_path, backend):
+    settings = dataclasses.replace(
+        load_settings(), state_dir=tmp_path / "state", db_path=tmp_path / "gw.db", web_dist=tmp_path / "dist",
+        admin_username="root", admin_password="rootpass1", secret_key="test-secret",
+        upload_max_file_bytes=100,
+    )
+    with TestClient(create_app(settings, backend)) as client:
+        upload = lambda body: client.post("/u/root/api/dshCloudFiles/upload?session=s&path=a/b.bin", content=body)
+        assert upload(b"x").status_code == 401
+        login(client, "root", "rootpass1")
+        assert client.get("/u/root/_dsh-cloud/files/limits").json() == {"maxFileBytes": 100}
+        assert upload(b"x").status_code == 503
+        client.post("/api/me/sandbox/start")
+        forwarded = []
+
+        def sandbox(request: httpx.Request) -> httpx.Response:
+            forwarded.append((request.url.path, request.url.query, request.read()))
+            return httpx.Response(201, stream=httpx.ByteStream(b"{}"))
+
+        client.app.state.sandbox_http = httpx.AsyncClient(transport=httpx.MockTransport(sandbox))
+        refused = upload(b"x" * 101)
+        assert refused.status_code == 413 and refused.json() == {"code": "too-large", "limit": 100}
+        assert upload(b"x" * 100).status_code == 201
+        assert forwarded == [("/api/dshCloudFiles/upload", b"session=s&path=a/b.bin", b"x" * 100)]
 
 
 def check_knowledge_base_uploads(client):

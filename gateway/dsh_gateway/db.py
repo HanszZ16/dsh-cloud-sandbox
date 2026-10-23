@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS groups (
@@ -99,13 +99,15 @@ CREATE TABLE images (
 );
 ALTER TABLE groups ADD COLUMN image_id INTEGER REFERENCES images(id);
 """,
-    # Registers the built-in plugins in existing catalogs; see _seed_builtin_plugins.
+    # Register the built-in plugins each version introduced; see _seed_builtin_plugins.
     3: "",
+    4: "",
 }
 
-# Plugins shipped in the sandbox image. Every catalog gets them once, when it
-# is created or upgraded to schema 3, assigned to the default group; afterwards
-# they are ordinary catalog rows that admins may edit, unassign, or delete.
+# Plugins shipped in the sandbox image. Every catalog gets each one once, when
+# it is created or upgraded to the schema version that introduced it
+# ("since"), assigned to the default group; afterwards they are ordinary
+# catalog rows that admins may edit, unassign, or delete.
 BUILTIN_PLUGINS = (
     {
         "key": "workspace-browser",
@@ -113,6 +115,7 @@ BUILTIN_PLUGINS = (
         "name": "远程浏览器",
         "description": "Agent 通过 Playwright MCP 操作工作空间里的 Chromium；用户在右侧边栏「远程浏览器」里实时查看并接管",
         "config": {"spec": "file:/usr/local/lib/dsh-cloud/workspace-browser"},
+        "since": 3,
     },
     {
         "key": "rag-kb",
@@ -120,6 +123,15 @@ BUILTIN_PLUGINS = (
         "name": "知识库",
         "description": "本地知识库：在对话里添加文档，向量与关键词混合检索并标注出处；插件和中文向量模型都在镜像里",
         "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/rag-kb"},
+        "since": 3,
+    },
+    {
+        "key": "workspace-upload",
+        "kind": "bundle",
+        "name": "上传文件",
+        "description": "工作区文件面板顶部的上传按钮：把文件或整个文件夹上传到当前项目",
+        "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/workspace-upload"},
+        "since": 4,
     },
 )
 
@@ -169,26 +181,28 @@ class Database:
                 self._conn.executescript(_SCHEMA)
                 version = 1
             for target in range(version + 1, SCHEMA_VERSION + 1):
-                if target == 3:
-                    # Idempotent, so it runs before the version is recorded.
-                    self._seed_builtin_plugins()
+                # Idempotent, so it runs before the version is recorded.
+                self._seed_builtin_plugins(target)
                 self._conn.executescript(f"BEGIN; {_MIGRATIONS[target]} PRAGMA user_version={target}; COMMIT;")
 
-    def _seed_builtin_plugins(self) -> None:
-        """Add the built-in plugins missing from the catalog and give them to the default group.
+    def _seed_builtin_plugins(self, version: int) -> None:
+        """Add the built-in plugins introduced in `version` and give them to the default group.
 
         A plugin whose key an admin already registered is left as it is. The
-        default group (the first one) receives the built-ins no group or user
-        has yet; a new database has no group here, and ensure_default_group
-        assigns them when it creates one.
+        default group (the first one) receives those built-ins when no group or
+        user has them yet; a new database has no group here, and
+        ensure_default_group assigns them when it creates one.
         """
-        for plugin in BUILTIN_PLUGINS:
+        introduced = [p for p in BUILTIN_PLUGINS if p["since"] == version]
+        if not introduced:
+            return
+        for plugin in introduced:
             stored = _plugin_columns(plugin)
             self._conn.execute(
                 f"INSERT OR IGNORE INTO plugins ({', '.join(stored)}) VALUES ({', '.join('?' for _ in stored)})",
                 tuple(stored.values()),
             )
-        keys = tuple(p["key"] for p in BUILTIN_PLUGINS)
+        keys = tuple(p["key"] for p in introduced)
         self._conn.execute(
             "INSERT INTO group_plugins SELECT g.id, p.id FROM plugins p, (SELECT MIN(id) AS id FROM groups) g "
             f"WHERE g.id IS NOT NULL AND p.key IN ({', '.join('?' for _ in keys)}) "
