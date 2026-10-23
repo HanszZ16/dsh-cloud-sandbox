@@ -88,7 +88,7 @@ dsh-cloud-sandbox/
 │   ├── base/                      Base image (also the default image)
 │   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + CJK fonts, user agent, compatibility labels
 │   │   ├── entrypoint.sh          Install MCP packages → prepare ~/workspaces → start the browser hub and dsh (with the workspace layout patch and the admin overlay) → install default plugins in the background; forwards stop signals to both
-│   │   ├── workspace.cordis.yml   dsh patch: a new user's first project is ~/workspaces/default-workspace
+│   │   ├── defaults.cordis.yml   dsh patch for every user: first project in ~/workspaces, right-sidebar Browser on
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
 │   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Remote browser"
 │   │   ├── plugins/rag-kb/        Knowledge base plugin (our fork of @puwenhui/dsh-rag-kb), shipped in the image
@@ -362,7 +362,7 @@ Notes:
 
 `/home/agent` in the sandbox is the user's whole computer and is saved and restored as one unit.
 
-**Projects** live in `/home/agent/workspaces/<name>`. A new user's first project, `~/workspaces/default-workspace`, is created and opened by dsh on first entry; **Add workspace** opens the directory dialog at the home directory, where `workspaces` is the only visible folder, and new projects are created inside it. The agent works in the open project's directory and the Files panel shows only that project. The image sets this up through `sandbox-image/base/workspace.cordis.yml` (dsh's first-use Documents directory) and the entrypoint, which links `~/.dsh-cloud/documents/deepseek-harness` to `~/workspaces`. Users who registered a workspace before this layout (for example `/home/agent` itself) keep it; they can add projects under `~/workspaces` the same way. The directory dialog can still go above the home directory: anything created outside `/home/agent` is lost when the workspace sleeps.
+**Projects** live in `/home/agent/workspaces/<name>`. A new user's first project, `~/workspaces/default-workspace`, is created and opened by dsh on first entry; **Add workspace** opens the directory dialog at the home directory, where `workspaces` is the only visible folder, and new projects are created inside it. The agent works in the open project's directory and the Files panel shows only that project. The image sets this up through `sandbox-image/base/defaults.cordis.yml` (dsh's first-use Documents directory) and the entrypoint, which links `~/.dsh-cloud/documents/deepseek-harness` to `~/workspaces`. Users who registered a workspace before this layout (for example `/home/agent` itself) keep it; they can add projects under `~/workspaces` the same way. The directory dialog can still go above the home directory: anything created outside `/home/agent` is lost when the workspace sleeps.
 
 | Data | Location | Persistent? |
 |---|---|---|

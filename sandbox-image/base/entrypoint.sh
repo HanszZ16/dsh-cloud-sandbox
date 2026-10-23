@@ -14,7 +14,7 @@ BIND_IP="${DSH_BIND_IP:-$(hostname -I | awk '{print $1}')}"
 PORT="${DSH_PORT:-3080}"
 python3 /usr/local/lib/dsh-cloud/provision.py npm || true
 
-# Projects live in ~/workspaces; see /usr/local/lib/dsh-cloud/workspace.cordis.yml
+# Projects live in ~/workspaces; see /usr/local/lib/dsh-cloud/defaults.cordis.yml
 # for how dsh's first-use Workspace lands there.
 mkdir -p "$HOME/workspaces" "$HOME/.dsh-cloud/documents"
 ln -sfn "$HOME/workspaces" "$HOME/.dsh-cloud/documents/deepseek-harness"
@@ -25,7 +25,7 @@ HUB_PID=$!
 python3 /usr/local/lib/dsh-cloud/provision.py bundles "$BIND_IP" "$PORT" &
 
 # --patch is a launcher option: it must precede the web app's own flags.
-set -- --profile web --patch /usr/local/lib/dsh-cloud/workspace.cordis.yml
+set -- --profile web --patch /usr/local/lib/dsh-cloud/defaults.cordis.yml
 if [ -f /etc/dsh-cloud/admin.cordis.yml ]; then
   set -- "$@" --patch /etc/dsh-cloud/admin.cordis.yml
 fi

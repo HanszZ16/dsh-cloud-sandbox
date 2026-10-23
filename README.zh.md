@@ -87,7 +87,7 @@ dsh-cloud-sandbox/
 │   ├── base/                      基础镜像（也是默认镜像）
 │   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + 中文字体，用户 agent，兼容性标签
 │   │   ├── entrypoint.sh          安装 MCP 包 → 准备 ~/workspaces → 启动浏览器中转服务和 dsh（带工作区布局补丁和管理员 overlay）→ 后台安装默认插件；停止时把信号转给两者
-│   │   ├── workspace.cordis.yml   dsh 补丁：新用户的第一个项目是 ~/workspaces/default-workspace
+│   │   ├── defaults.cordis.yml   所有用户的 dsh 补丁：第一个项目在 ~/workspaces，打开右侧边栏浏览器
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
 │   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「远程浏览器」
 │   │   ├── plugins/rag-kb/        知识库插件（@puwenhui/dsh-rag-kb 的 fork），装在镜像里
@@ -361,7 +361,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 
 沙箱里的 `/home/agent` 就是用户的整台电脑，作为一个整体保存和恢复。
 
-**项目**放在 `/home/agent/workspaces/<项目名>`。新用户第一次进入时，dsh 会自动创建并打开第一个项目 `~/workspaces/default-workspace`；点 **添加工作区** 时，选择目录的对话框从 home 开始，那里唯一可见的文件夹就是 `workspaces`，新项目建在它里面。agent 在当前打开的项目目录里工作，文件面板也只显示这个项目。这是由镜像里的 `sandbox-image/base/workspace.cordis.yml`（指定 dsh 首次使用时的"文档"目录）和启动脚本（把 `~/.dsh-cloud/documents/deepseek-harness` 链接到 `~/workspaces`）实现的。在这之前已经登记过工作区的用户（比如直接用 `/home/agent` 的），原来的工作区保持不变，也可以用同样的方式在 `~/workspaces` 下新建项目。选择目录的对话框仍然可以往上翻到 home 以外：建在 `/home/agent` 以外的东西，工作空间休眠后就没了。
+**项目**放在 `/home/agent/workspaces/<项目名>`。新用户第一次进入时，dsh 会自动创建并打开第一个项目 `~/workspaces/default-workspace`；点 **添加工作区** 时，选择目录的对话框从 home 开始，那里唯一可见的文件夹就是 `workspaces`，新项目建在它里面。agent 在当前打开的项目目录里工作，文件面板也只显示这个项目。这是由镜像里的 `sandbox-image/base/defaults.cordis.yml`（指定 dsh 首次使用时的"文档"目录）和启动脚本（把 `~/.dsh-cloud/documents/deepseek-harness` 链接到 `~/workspaces`）实现的。在这之前已经登记过工作区的用户（比如直接用 `/home/agent` 的），原来的工作区保持不变，也可以用同样的方式在 `~/workspaces` 下新建项目。选择目录的对话框仍然可以往上翻到 home 以外：建在 `/home/agent` 以外的东西，工作空间休眠后就没了。
 
 | 数据 | 位置 | 是否持久 |
 |---|---|---|

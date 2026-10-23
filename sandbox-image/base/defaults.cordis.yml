@@ -1,0 +1,16 @@
+# dsh-cloud defaults, applied to every sandbox before the gateway's admin
+# overlay. As a launch overlay it sits above each user's own cordis.patch.yml,
+# so these entries hold for every user.
+#
+# Projects live in /home/agent/workspaces/<name>. dsh creates a new user's
+# first Workspace at <documentsDirectory>/deepseek-harness/default-workspace;
+# the entrypoint links that deepseek-harness directory to
+# /home/agent/workspaces, so the first project is
+# /home/agent/workspaces/default-workspace (dsh registers the resolved path).
+- id: workspace-controller
+  config:
+    documentsDirectory: /home/agent/.dsh-cloud/documents
+# The right-sidebar Browser (an iframe in the user's own browser), which the
+# Web profile turns off by default.
+- id: ui-sidebar-browser
+  disabled: false
