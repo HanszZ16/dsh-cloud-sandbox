@@ -18,6 +18,8 @@ python3 /usr/local/lib/dsh-cloud/provision.py npm || true
 # for how dsh's first-use Workspace lands there.
 mkdir -p "$HOME/workspaces" "$HOME/.dsh-cloud/documents"
 ln -sfn "$HOME/workspaces" "$HOME/.dsh-cloud/documents/deepseek-harness"
+# Working directory of the browser MCP server (workspace-browser/cordis.patch.yml).
+mkdir -p /tmp/playwright-mcp
 
 # The hub starts Chromium only on first use; idle it costs one small Node process.
 HUB_HOST="$BIND_IP" HUB_PORT="${HUB_PORT:-3081}" node /usr/local/lib/dsh-cloud/browser-hub/hub.mjs &

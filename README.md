@@ -282,7 +282,7 @@ The E2B backend treats the image reference as a template id and does not check l
 
 > The full guide (usage, implementation, deployment, limits, troubleshooting) is in [docs/browser-preview.md](docs/browser-preview.md).
 
-Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Remote browser" tab of dsh's right sidebar ("浏览器预览" in Chinese, following dsh's language setting), where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent. The tab opens by itself (expanding a collapsed sidebar) when the agent starts operating the browser.
+Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Remote browser" tab of dsh's right sidebar ("远程浏览器" in Chinese, following dsh's language setting), where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent. The tab opens by itself (expanding a collapsed sidebar) when the agent starts operating the browser.
 
 ```
 Sandbox
@@ -301,6 +301,8 @@ dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName br
 - It uses Chrome DevTools Protocol page screencasting (`Page.startScreencast`) plus input forwarding, with no virtual display. The view shows page content; the browser's own chrome (address bar, tabs) is drawn by the plugin. alert/confirm/prompt dialogs from pages appear in the panel.
 - Playwright MCP is mounted as an ordinary MCP server, so **every session shares the same browser and the same tools**. dsh's experimental browser plugin (`dsh-experimental-browser-use-playwright-mcp`) is not used, because its attach mode lets only one session hold the browser at a time and leaves later sessions without browser tools.
 - Tool results carry no screenshots (`--image-responses omit`) because the default DeepSeek models read text; page structure still arrives as a text snapshot. Drop the flag when using a model that reads images.
+- **When the agent uses it:** the plugin adds a system prompt section: use the browser only when the user asks to open or operate a web page, when a site needs sign-in, forms, clicks, or JavaScript rendering, or when the user asks to check something in a browser. The agent does not open the browser by itself to check files it generated, and a requested check stops at the defects asked about. Without it, a model with 24 browser tools in every request tends to screenshot and restyle its own pages for minutes.
+- Playwright MCP runs in `/tmp/playwright-mcp`, so screenshots and other output files go there instead of the user's home, and `file://` pages open directly (`--allow-unrestricted-file-access`; the sandbox has one user).
 - When the image carries a new version of the plugin, users get it the next time their workspace starts, before dsh boots.
 - You and the agent can act at the same time; the panel only signals "Agent is operating" and does not block the agent.
 - The right-sidebar plugin is written directly in dsh's client module format (`workspace-browser/client.js`) and uses dsh's pre-stable right-sidebar contract (`sidebarRightTabs`, the `sidebar.right.pane.tab` slot); re-verify after upgrading dsh.

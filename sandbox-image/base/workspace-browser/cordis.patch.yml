@@ -7,6 +7,10 @@
 # Chromium on first use and lets the user's live view show when the agent is
 # operating. Images are omitted from tool results because the default
 # DeepSeek models read text; page snapshots still arrive as text.
+# The server runs in /tmp/playwright-mcp (made by the entrypoint), where
+# relative output names such as screenshot filenames land, so nothing is
+# written to the user's home. file:// pages open directly: the sandbox has one
+# user, who can read these files through the agent's other tools anyway.
 - insert:
     - id: dsh-cloud-browser-mcp
       name: '@deepseek-ai/dsh-mcp-client'
@@ -21,6 +25,8 @@
           - omit
           - --output-dir
           - /tmp/playwright-mcp
+          - --allow-unrestricted-file-access
+        cwd: /tmp/playwright-mcp
         toolCallTimeoutMs: 120000
     - id: dsh-cloud-workspace-browser
       name: dsh-cloud-workspace-browser
