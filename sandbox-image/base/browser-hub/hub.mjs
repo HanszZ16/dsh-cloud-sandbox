@@ -153,6 +153,9 @@ const viewer = {
   history: { canGoBack: false, canGoForward: false },
   agentActive: false,
   connecting: null,
+  // The active tab's latest frame. Chromium sends a frame only when the page
+  // repaints, so a viewer that joins later starts from this one.
+  lastFrame: null,
 
   broadcast(message) {
     const text = JSON.stringify(message)
@@ -188,6 +191,7 @@ const viewer = {
       await this.connect()
       socket.send(JSON.stringify({ type: 'status', state: 'ready' }))
       this.sendTabs()
+      if (this.lastFrame && socket.readyState === WebSocket.OPEN) socket.send(this.lastFrame)
     } catch (err) {
       socket.send(JSON.stringify({ type: 'status', state: 'error', message: err.message }))
     }
@@ -220,6 +224,8 @@ const viewer = {
       this.pages.set(targetId, { id: targetId, title: '', url: 'about:blank' })
     }
     await this.activate([...this.pages.keys()].at(-1))
+    // Every viewer left while this connection was being made.
+    if (this.sockets.size === 0) this.disconnect()
   },
 
   reset() {
@@ -227,6 +233,7 @@ const viewer = {
     this.pages.clear()
     this.activeId = null
     this.sessionId = null
+    this.lastFrame = null
   },
 
   disconnect() {
@@ -249,6 +256,7 @@ const viewer = {
       await cdp.send('Target.detachFromTarget', { sessionId: old }).catch(() => undefined)
     }
     this.activeId = targetId
+    this.lastFrame = null
     const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
     this.sessionId = sessionId
     await cdp.send('Target.activateTarget', { targetId }).catch(() => undefined)
@@ -269,10 +277,11 @@ const viewer = {
       case 'Page.screencastFrame':
         if (sessionId !== this.sessionId) return
         this.cdp.send('Page.screencastFrameAck', { sessionId: params.sessionId }, sessionId).catch(() => undefined)
-        this.broadcast({
+        this.lastFrame = JSON.stringify({
           type: 'frame', data: params.data,
           width: params.metadata.deviceWidth, height: params.metadata.deviceHeight,
         })
+        for (const socket of this.sockets) if (socket.readyState === WebSocket.OPEN) socket.send(this.lastFrame)
         return
       case 'Target.targetCreated':
         if (params.targetInfo.type !== 'page') return
