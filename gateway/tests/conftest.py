@@ -6,7 +6,8 @@ from dsh_gateway.backends.base import ImageInfo, SandboxBackend, SandboxHandle, 
 class FakeBackend(SandboxBackend):
     name = "fake"
 
-    def __init__(self, fail_capture: bool = False) -> None:
+    def __init__(self, fail_capture: bool = False, keeps_home: bool = False) -> None:
+        self.keeps_home = keeps_home
         self.live: dict[str, SandboxSpec] = {}
         self.fail_capture = fail_capture
         self.orphans: list[SandboxHandle] = []
@@ -32,6 +33,8 @@ class FakeBackend(SandboxBackend):
             self.steps.append(step)
         if self.fail_capture:
             raise RuntimeError("disk unreadable")
+        if self.keeps_home:
+            return {}
         return {"home": f"state-of-{handle.user_id}".encode()}
 
     async def destroy(self, handle):

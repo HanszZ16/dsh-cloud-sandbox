@@ -34,6 +34,8 @@ class Settings:
     # Host directory holding each OpenSandbox sandbox's /etc/dsh-cloud, mounted read-only;
     # the server's [storage].allowed_host_paths must include it.
     opensandbox_files_dir: Path
+    # Keep each user's home in an OpenSandbox volume instead of archiving it.
+    opensandbox_home_volumes: bool
     # Labels this gateway's sandboxes; orphan recovery only touches its own.
     instance_id: str
     state_dir: Path
@@ -98,6 +100,7 @@ def load_settings() -> Settings:
         opensandbox_url=os.environ.get("OPENSANDBOX_URL", "http://127.0.0.1:8090").rstrip("/"),
         opensandbox_api_key=os.environ.get("OPENSANDBOX_API_KEY", ""),
         opensandbox_files_dir=Path(os.environ.get("OPENSANDBOX_FILES_DIR", "sandbox-files")).resolve(),
+        opensandbox_home_volumes=os.environ.get("OPENSANDBOX_HOME_VOLUMES", "1") not in {"0", "false", "no"},
         instance_id=os.environ.get("GATEWAY_INSTANCE_ID", "default"),
         state_dir=Path(os.environ.get("GATEWAY_STATE_DIR", "state")).resolve(),
         db_path=Path(os.environ.get("GATEWAY_DB_PATH", "data/gateway.db")).resolve(),

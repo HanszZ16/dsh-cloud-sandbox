@@ -159,3 +159,47 @@ def test_snapshots_are_re_rooted_so_docker_extracts_them_at_the_root():
         assert members["home/agent/plugin"].linkname == "../../usr/local/lib/plugin"
         assert members["home/agent/notes-copy.md"].linkname == "home/agent/notes.md"
         assert members["home/agent/手册"].linkname == "knowledge/报销制度.md"
+
+
+async def test_a_snapshot_moves_into_a_home_volume_once(settings, tmp_path):
+    backend = FakeBackend(keeps_home=True)
+    store = LocalStateStore(tmp_path)
+    await store.save("alice", {"home": b"old-snapshot"})
+    manager = SandboxManager(settings, backend, store)
+    await manager.ensure("alice", POLICY)
+    (spec,) = backend.live.values()
+    assert spec.restore == {"home": b"old-snapshot"}
+    assert spec.home_volume is not None and spec.home_volume.startswith("alice-")
+    assert not (tmp_path / "alice" / "home.tar").exists()
+    assert (tmp_path / "alice" / "home.tar.imported").read_bytes() == b"old-snapshot"
+
+    await manager.release("alice", "logout")
+    assert not (tmp_path / "alice" / "home.tar").exists()
+    await manager.ensure("alice", POLICY)
+    (again,) = backend.live.values()
+    assert again.restore == {}
+    assert again.home_volume == spec.home_volume
+
+
+async def test_a_new_user_gets_a_home_volume_that_counts_as_saved_work(settings, tmp_path):
+    backend = FakeBackend(keeps_home=True)
+    manager = SandboxManager(settings, backend, LocalStateStore(tmp_path))
+    assert not manager.has_saved_state("bob")
+    await manager.ensure("bob", POLICY)
+    (spec,) = backend.live.values()
+    assert spec.restore == {} and spec.home_volume.startswith("bob-")
+    assert manager.has_saved_state("bob")
+
+
+async def test_purged_data_leaves_the_next_account_a_new_home_volume(settings, tmp_path):
+    import shutil
+
+    backend = FakeBackend(keeps_home=True)
+    manager = SandboxManager(settings, backend, LocalStateStore(tmp_path))
+    await manager.ensure("carol", POLICY)
+    (first,) = backend.live.values()
+    await manager.release("carol", "account deleted")
+    shutil.rmtree(tmp_path / "carol")
+    await manager.ensure("carol", POLICY)
+    (second,) = backend.live.values()
+    assert second.home_volume != first.home_volume

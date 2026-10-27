@@ -26,6 +26,7 @@ def create_backend(settings: Settings) -> SandboxBackend:
         return OpenSandboxBackend(
             settings.opensandbox_url, settings.opensandbox_api_key, settings.docker_image,
             settings.opensandbox_files_dir, settings.secret_key, settings.start_timeout_s, settings.instance_id,
+            settings.opensandbox_home_volumes,
         )
     raise RuntimeError(f"unknown SANDBOX_BACKEND {settings.backend!r}; use docker, e2b, or opensandbox")
 

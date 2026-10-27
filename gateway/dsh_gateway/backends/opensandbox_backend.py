@@ -21,6 +21,12 @@ How the sandbox is laid out:
 - The admin policy files (/etc/dsh-cloud) are written to a host directory and
   bind-mounted read-only: the image runs as `agent`, which cannot write /etc.
   The server must allow that directory in [storage].allowed_host_paths.
+- With home volumes (the default), /home/agent is a per-user named volume
+  (an OpenSandbox `pvc` volume) that outlives each sandbox: nothing is
+  archived on release. A new volume is filled once, from the user's archive
+  when one exists (migration from snapshots), otherwise from /etc/skel, and
+  marked so later starts leave it as it is. Without home volumes, home is
+  restored from and captured to archives like the other backends.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import shlex
@@ -39,6 +46,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .base import Progress, SandboxBackend, SandboxHandle, SandboxSpec, no_progress
+
+log = logging.getLogger("dsh_gateway.backends.opensandbox")
 
 _LAUNCH_LINE = re.compile(r"dsh web: (https?://\S+\?token=\S+)")
 _DSH_PORT = 8080
@@ -61,6 +70,9 @@ _PARTS = {"home": ("/home", "agent")}
 _POLICY_DIR = "/etc/dsh-cloud"
 # Seconds dsh gets to close its stores after SIGTERM before it is killed, as `docker stop`.
 _STOP_GRACE_S = 20
+_HOME = "/home/agent"
+# Present in a home volume once it has been filled.
+_HOME_MARK = f"{_HOME}/.dsh-cloud/home-volume"
 _DOCKER_MEMORY = re.compile(r"^(\d+)([kmgt])b?$", re.IGNORECASE)
 
 
@@ -71,6 +83,12 @@ def memory_quantity(docker_memory: str) -> str:
         # Plain bytes, or already a Kubernetes-style quantity.
         return docker_memory.strip()
     return f"{match.group(1)}{match.group(2).upper()}i"
+
+
+def volume_name(instance_id: str, home_volume: str) -> str:
+    """The Docker volume (OpenSandbox claim) name of a home volume; a DNS label, unique per gateway instance."""
+    instance = re.sub(r"[^a-z0-9-]+", "-", instance_id.lower()).strip("-") or "default"
+    return f"dsh-home-{instance}-{home_volume}"
 
 
 def policy_files(files: dict[str, bytes]) -> dict[str, bytes]:
@@ -94,7 +112,7 @@ class OpenSandboxBackend(SandboxBackend):
 
     def __init__(
         self, url: str, api_key: str, image: str, files_dir: Path, secret_key: str, start_timeout_s: int,
-        instance_id: str,
+        instance_id: str, home_volumes: bool,
     ) -> None:
         try:
             from opensandbox import Sandbox, SandboxManager
@@ -117,6 +135,7 @@ class OpenSandboxBackend(SandboxBackend):
         self._instance_id = instance_id
         self._machines: dict[str, _Machine] = {}
         self._manager = None
+        self.keeps_home = home_volumes
 
     def _connection(self, token: str | None = None):
         return self._config_cls(
@@ -137,7 +156,7 @@ class OpenSandboxBackend(SandboxBackend):
         return self._manager
 
     async def start(self, spec: SandboxSpec, progress: Progress = no_progress) -> SandboxHandle:
-        from opensandbox.models.sandboxes import Host, Volume
+        from opensandbox.models.sandboxes import PVC, Host, Volume
 
         nonce = secrets.token_hex(8)
         token = self._token(nonce)
@@ -148,6 +167,18 @@ class OpenSandboxBackend(SandboxBackend):
             await asyncio.to_thread(_write_tree, files_dir, files)
             volumes.append(Volume(
                 name="dsh-cloud-policy", host=Host(path=str(files_dir)), mount_path=_POLICY_DIR, read_only=True,
+            ))
+        if self.keeps_home:
+            if spec.home_volume is None:
+                raise ValueError("the opensandbox backend keeps home in a volume; spec.home_volume is required")
+            volumes.append(Volume(
+                name="home",
+                pvc=PVC(
+                    claim_name=volume_name(self._instance_id, spec.home_volume),
+                    create_if_not_exists=True,
+                    delete_on_sandbox_termination=False,
+                ),
+                mount_path=_HOME,
             ))
         env = dict(spec.env)
         env.update({
@@ -181,11 +212,10 @@ class OpenSandboxBackend(SandboxBackend):
         machine = _Machine(sbx, files_dir)
         try:
             progress("restore")
-            for part, data in spec.restore.items():
-                parent, _ = _PARTS[part]
-                archive = f"/tmp/dsh-cloud-restore-{part}.tar"
-                await sbx.files.write_file(archive, data, mode=600)
-                await _run(sbx, f"tar -xpf {archive} -C {parent} && rm -f {archive}")
+            if self.keeps_home:
+                await self._fill_home(sbx, spec)
+            else:
+                await self._restore(sbx, spec.restore)
             progress("boot")
             await _run(sbx, f"mkdir -p {_RUN} && touch {_RUN}/start")
             await self._wait_listening(sbx)
@@ -202,6 +232,30 @@ class OpenSandboxBackend(SandboxBackend):
             browser_url=_http(hub.endpoint),
             browser_headers={**hub.headers, _TOKEN_HEADER: token},
         )
+
+    async def _restore(self, sbx, restore: dict[str, bytes]) -> None:
+        for part, data in restore.items():
+            parent, _ = _PARTS[part]
+            archive = f"/tmp/dsh-cloud-restore-{part}.tar"
+            await sbx.files.write_file(archive, data, mode=600)
+            await _run(sbx, f"tar -xpf {archive} -C {parent} && rm -f {archive}")
+
+    async def _fill_home(self, sbx, spec: SandboxSpec) -> None:
+        """Fill a new home volume once: from the user's archive, else from /etc/skel."""
+        if not (await _run(sbx, f"test -w {_HOME} && echo writable || true")).strip():
+            raise RuntimeError(f"the home volume of {spec.user_id} is not writable by the sandbox user")
+        if (await _run(sbx, f"test -e {_HOME_MARK} && echo filled || true")).strip():
+            if spec.restore:
+                log.warning(
+                    "home volume %s of %s is already filled; its archive is not imported again",
+                    spec.home_volume, spec.user_id,
+                )
+            return
+        await self._restore(sbx, spec.restore)
+        await _run(sbx, (
+            f"cp -rn /etc/skel/. {_HOME}/ && mkdir -p $(dirname {_HOME_MARK}) "
+            f"&& echo {shlex.quote(spec.home_volume or '')} > {_HOME_MARK}"
+        ))
 
     async def _wait_listening(self, sbx) -> None:
         deadline = time.monotonic() + self._start_timeout_s
@@ -251,6 +305,9 @@ class OpenSandboxBackend(SandboxBackend):
             "pkill -KILL -f 'dsh --profile web'; pkill -KILL -f browser-hub/hub.mjs; kill -KILL $pid; sleep 1; fi; "
             "true"
         ))
+        if self.keeps_home:
+            # The volume outlives the machine; there is nothing to archive.
+            return {}
         progress("archive")
         archives: dict[str, bytes] = {}
         for part, (parent, name) in _PARTS.items():

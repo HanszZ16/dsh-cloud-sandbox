@@ -1,6 +1,8 @@
 """Per-user durable state that outlives every sandbox.
 
-Each user owns one directory holding the latest archive per STATE_PARTS name.
+Each user owns one directory holding the latest archive per STATE_PARTS name,
+or, for a backend that keeps home in a volume, the name of that volume
+(home.volume). Archives imported into a volume are kept as <part>.tar.imported.
 Swap this class for object storage (S3/OSS keyed by user id) in production;
 the manager only calls load() and save().
 """
@@ -13,6 +15,8 @@ from pathlib import Path
 
 from .backends import STATE_PARTS
 
+_HOME_VOLUME = "home.volume"
+
 
 class LocalStateStore:
     def __init__(self, root: Path) -> None:
@@ -23,8 +27,29 @@ class LocalStateStore:
         return self._root / user_id
 
     def exists(self, user_id: str) -> bool:
-        """Whether the user has a saved snapshot, i.e. has used their workspace before."""
-        return any((self._dir(user_id) / f"{part}.tar").exists() for part in STATE_PARTS)
+        """Whether the user has a saved snapshot or home volume, i.e. has used their workspace before."""
+        directory = self._dir(user_id)
+        return (directory / _HOME_VOLUME).exists() or any((directory / f"{part}.tar").exists() for part in STATE_PARTS)
+
+    def home_volume(self, user_id: str) -> str | None:
+        path = self._dir(user_id) / _HOME_VOLUME
+        if not path.exists():
+            return None
+        return path.read_text().strip() or None
+
+    def set_home_volume(self, user_id: str, name: str) -> None:
+        directory = self._dir(user_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        partial = directory / f"{_HOME_VOLUME}.partial"
+        partial.write_text(name + "\n")
+        os.replace(partial, directory / _HOME_VOLUME)
+
+    def retire_archives(self, user_id: str) -> None:
+        """Rename the user's archives to <part>.tar.imported, so they are kept but never loaded again."""
+        for part in STATE_PARTS:
+            path = self._dir(user_id) / f"{part}.tar"
+            if path.exists():
+                os.replace(path, path.with_name(f"{part}.tar.imported"))
 
     async def load(self, user_id: str) -> dict[str, bytes]:
         return await asyncio.to_thread(self._load, user_id)

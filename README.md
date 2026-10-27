@@ -399,6 +399,7 @@ Notes:
 | Knowledge base files and index | `/home/agent/knowledge/`, `/home/agent/.dsh/rag-kb/index.db` | ✅ Same; the plugin and model come from the image |
 | System directories (`/usr`, `/tmp`, apt software, the pnpm content store `/var/cache/pnpm-store`) | The image the group chose | ❌ Back to the image's state on every start; put needed system software in an image (see [Images](#images-different-software-per-group)) |
 | Snapshot files | Gateway `gateway/state/<username>/home.tar` | ✅ Written atomically (`.partial`, then rename) |
+| Home volumes (OpenSandbox backend) | Docker volume `dsh-home-<instance>-<username>-<id>`, named in `gateway/state/<username>/home.volume` | ✅ Replaces `home.tar`: `/home/agent` is the volume itself and is never archived |
 | Accounts, groups, plugin catalog, sessions, usage, audit | Gateway `gateway/data/gateway.db` (SQLite) | ✅ |
 | Users' own API keys | `gateway.db`, encrypted (Fernet) with a key derived from `GATEWAY_SECRET_KEY` | ✅ Never enters a sandbox |
 | Shared API key | The gateway process's environment | Never enters a sandbox |
@@ -511,6 +512,7 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 | `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Image for the Docker and OpenSandbox backends |
 | `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` | `http://127.0.0.1:8090` / Empty | OpenSandbox server address and API key |
 | `OPENSANDBOX_FILES_DIR` | `sandbox-files` | Host directory for each OpenSandbox sandbox's read-only `/etc/dsh-cloud`; must be in the server's `allowed_host_paths` |
+| `OPENSANDBOX_HOME_VOLUMES` | `1` | Keep each user's `/home/agent` in a volume; `0` archives it to `home.tar` like the Docker backend |
 | `SANDBOX_E2B_TEMPLATE` | Empty | Required for the E2B backend |
 | `SANDBOX_HTTP_PROXY` | Empty | Egress proxy for sandboxes (plugin and npm installs, web tools), e.g. `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | Default group's initial resources |
@@ -533,11 +535,12 @@ How the sandbox is laid out:
 - The server injects its execd daemon into the image and runs the image's own entry script after it, as the image user (`agent`). dsh listens on port 8080, which the server publishes on a host port; the gateway proxies to it as before;
 - The workspace browser hub listens on loopback and is reached through execd's port proxy (`/proxy/3081`);
 - Each sandbox gets its own execd access token (`EXECD_ACCESS_TOKEN`). Sandboxes share a Docker bridge network, and without the token one user's sandbox could run commands in another's. The token is derived from `GATEWAY_SECRET_KEY` and a nonce in the sandbox metadata, so a restarted gateway can still save orphans;
-- The entry process waits for a start flag, so the snapshot is restored before dsh starts, and it stays alive after dsh exits, so the snapshot is taken after dsh has closed its stores. Snapshots use execd file transfers and the same `home.tar` format as the other backends;
+- The entry process waits for a start flag, so home is ready before dsh starts, and it stays alive after dsh exits, so dsh closes its stores before the machine is removed;
+- `/home/agent` is a per-user Docker volume (an OpenSandbox `pvc` volume) that outlives each sandbox, so signing out, sleeping, and orphan recovery only stop dsh and remove the machine; nothing is archived or copied through the gateway. The gateway records the volume's name in `state/<username>/home.volume`. A new volume is filled once and marked with `~/.dsh-cloud/home-volume`: from the user's `home.tar` when one exists, which is then renamed `home.tar.imported` and never loaded again, otherwise from `/etc/skel`. Purging a user's data deletes `home.volume`, so an account created later with the same name gets a new, empty volume. With `OPENSANDBOX_HOME_VOLUMES=0`, home is archived to `home.tar` through execd file transfers instead, as with the other backends;
 - `/etc/dsh-cloud` is written to a directory under `OPENSANDBOX_FILES_DIR` and bind-mounted read-only, because the image user cannot write `/etc`;
 - The server never expires sandboxes (`timeout` is unset); the gateway's idle and lifetime limits decide, as with Docker. Group memory and CPU apply.
 
-Limits: the image must be built after the `HUB_HOST` change in `entrypoint.sh`; the admin console cannot inspect image labels through OpenSandbox, so images are accepted as declared; on Linux, sandboxes need another way to reach `host.docker.internal` (OpenSandbox does not add `host-gateway`), for example `GATEWAY_SANDBOX_CALLBACK_URL` set to the docker0 address. Egress policies, gVisor/Kata, Kubernetes, and named volumes for home are server options this backend does not use yet.
+Limits: the image must be built after the `HUB_HOST` change in `entrypoint.sh`; the admin console cannot inspect image labels through OpenSandbox, so images are accepted as declared; on Linux, sandboxes need another way to reach `host.docker.internal` (OpenSandbox does not add `host-gateway`), for example `GATEWAY_SANDBOX_CALLBACK_URL` set to the docker0 address. Home volumes: a purged user's old volume stays on the Docker host, because OpenSandbox has no API to delete volumes; remove volumes no `home.volume` names with `docker volume rm`. Switching a gateway back to a snapshot backend starts users with volumes from their last `home.tar`, if any, not from the volume. Egress policies, gVisor/Kata, and Kubernetes are server options this backend does not use yet.
 
 ## E2B backend (unverified)
 
@@ -568,6 +571,8 @@ For Daytona, Kubernetes with gVisor/Kata, Firecracker, and so on, implement `San
 | `keepalive(handle)` | Optional: extend a backend-side timeout (e.g. E2B) |
 
 The snapshot format is shared across backends: a tar rooted at `agent/`, extracted into `/home`. `base.files_archive()` packs `spec.files` into a tar rooted at `/`. Register the backend in `create_backend` in `backends/__init__.py`.
+
+A backend whose platform keeps volumes sets `keeps_home = True`: it mounts the volume `spec.home_volume` at `/home/agent`, fills a new one from `spec.restore`, and returns `{}` from `capture()`; the manager records the volume name and retires imported archives.
 
 ## Development and tests
 

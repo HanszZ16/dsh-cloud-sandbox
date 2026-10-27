@@ -177,6 +177,13 @@ class SandboxManager:
     async def _start(self, user_id: str, policy: SandboxPolicy) -> SandboxRecord:
         model_token = "dshgw-" + secrets.token_urlsafe(32)
         callback = self._settings.sandbox_callback_url
+        home_volume = None
+        if self._backend.keeps_home:
+            home_volume = self._store.home_volume(user_id)
+            if home_volume is None:
+                # Recorded before the start, so a failed start is retried on the same volume.
+                home_volume = f"{user_id}-{secrets.token_hex(4)}"
+                self._store.set_home_volume(user_id, home_volume)
         spec = SandboxSpec(
             user_id=user_id,
             public_url=f"{self._settings.public_url}/u/{user_id}/",
@@ -192,10 +199,12 @@ class SandboxManager:
             files=policy.files,
             resources=policy.resources,
             image=policy.image,
+            home_volume=home_volume,
         )
         log.info(
-            "starting sandbox for %s on %s (restoring %s)",
+            "starting sandbox for %s on %s (restoring %s%s)",
             user_id, spec.image or "the default image", sorted(spec.restore) or "nothing",
+            f", home volume {home_volume}" if home_volume else "",
         )
         self._start_errors.pop(user_id, None)
         try:
@@ -203,6 +212,10 @@ class SandboxManager:
         except Exception as err:
             self._start_errors[user_id] = str(err) or type(err).__name__
             raise
+        if home_volume is not None and spec.restore:
+            # The archive now lives on in the volume; keep it, but never load it again.
+            self._store.retire_archives(user_id)
+            log.info("imported the snapshot of %s into home volume %s", user_id, home_volume)
         record = SandboxRecord(
             handle=handle, model_token=model_token,
             idle_timeout_s=policy.idle_timeout_s, max_lifetime_s=policy.max_lifetime_s, image=policy.image,

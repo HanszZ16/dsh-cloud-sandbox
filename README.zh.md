@@ -398,6 +398,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | 知识库文件和索引 | `/home/agent/knowledge/`、`/home/agent/.dsh/rag-kb/index.db` | ✅ 同上；插件和模型来自镜像 |
 | 系统目录（`/usr`、`/tmp`、apt 软件、pnpm 内容缓存 `/var/cache/pnpm-store`） | 用户组选择的镜像 | ❌ 每次启动回到镜像初始状态；需要的系统软件请放进镜像（见[镜像](#镜像按用户组提供不同的软件)） |
 | 快照文件 | 网关 `gateway/state/<用户名>/home.tar` | ✅ 原子写入（先写 `.partial` 再替换） |
+| home 卷（OpenSandbox 后端） | Docker 卷 `dsh-home-<实例>-<用户名>-<编号>`，卷名记在 `gateway/state/<用户名>/home.volume` | ✅ 取代 `home.tar`：`/home/agent` 就是这个卷，从不打包 |
 | 账号、用户组、插件目录、会话、用量、审计 | 网关 `gateway/data/gateway.db`（SQLite） | ✅ |
 | 用户自己的 API key | `gateway.db`，用 `GATEWAY_SECRET_KEY` 派生的密钥加密（Fernet） | ✅ 不进入沙箱 |
 | 共享 API key | 网关进程的环境变量 | 不进入沙箱 |
@@ -510,6 +511,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Docker 和 OpenSandbox 后端使用的镜像 |
 | `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` | `http://127.0.0.1:8090` / 空 | OpenSandbox server 地址和 API key |
 | `OPENSANDBOX_FILES_DIR` | `sandbox-files` | 每个 OpenSandbox 沙箱只读 `/etc/dsh-cloud` 所在的宿主机目录，必须在 server 的 `allowed_host_paths` 里 |
+| `OPENSANDBOX_HOME_VOLUMES` | `1` | 把每个用户的 `/home/agent` 放在卷里；设为 `0` 则和 Docker 后端一样打包成 `home.tar` |
 | `SANDBOX_E2B_TEMPLATE` | 空 | E2B 后端必填 |
 | `SANDBOX_HTTP_PROXY` | 空 | 沙箱出网代理（安装插件、npm 包、联网工具），例如 `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | 默认用户组的初始资源 |
@@ -532,11 +534,12 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 - server 把 execd 注入镜像，之后以镜像用户（`agent`）运行镜像自己的入口脚本。dsh 监听 8080 端口，server 把它发布到一个宿主机端口，网关照常代理；
 - 工作空间浏览器 hub 监听回环地址，通过 execd 的端口代理（`/proxy/3081`）访问；
 - 每个沙箱有自己的 execd 访问令牌（`EXECD_ACCESS_TOKEN`）。沙箱共用 Docker bridge 网络，没有令牌的话，一个用户的沙箱可以在另一个用户的沙箱里执行命令。令牌由 `GATEWAY_SECRET_KEY` 和沙箱元数据里的随机数派生，网关重启后仍能保存孤儿沙箱；
-- 入口进程等待启动标记，所以快照在 dsh 启动前恢复；dsh 退出后入口进程继续存活，所以快照在 dsh 关闭存储之后打包。快照通过 execd 的文件接口传输，格式和其他后端相同（`home.tar`）；
+- 入口进程等待启动标记，所以 home 在 dsh 启动前准备好；dsh 退出后入口进程继续存活，所以 dsh 先关闭存储，再删除机器；
+- `/home/agent` 是每个用户一个的 Docker 卷（OpenSandbox 的 `pvc` 卷），比每个沙箱活得久，所以退出登录、休眠和孤儿回收都只是停止 dsh、删除机器，不打包，也不经过网关传数据。网关把卷名记在 `state/<用户名>/home.volume`。新卷只填充一次，并用 `~/.dsh-cloud/home-volume` 标记：用户有 `home.tar` 时从它导入，导入后改名为 `home.tar.imported`，以后不再读取；否则从 `/etc/skel` 填充。清除用户数据会删除 `home.volume`，以后同名新建的账号会得到一个新的空卷。设置 `OPENSANDBOX_HOME_VOLUMES=0` 时，home 改为通过 execd 文件接口打包成 `home.tar`，和其他后端一样；
 - `/etc/dsh-cloud` 写到 `OPENSANDBOX_FILES_DIR` 下的一个目录，以只读方式挂载，因为镜像用户无法写 `/etc`；
 - server 不让沙箱过期（不设 `timeout`），和 Docker 后端一样由网关的空闲和最长时长决定。用户组的内存和 CPU 生效。
 
-限制：镜像必须包含 `entrypoint.sh` 里 `HUB_HOST` 的改动后重新构建；管理后台无法通过 OpenSandbox 读取镜像标签，所以镜像按声明接受；在 Linux 上，OpenSandbox 不会添加 `host-gateway`，沙箱需要其他方式访问 `host.docker.internal`，例如把 `GATEWAY_SANDBOX_CALLBACK_URL` 设为 docker0 的地址。出网策略、gVisor/Kata、Kubernetes、用命名卷保存 home 都是 server 支持、但这个后端还没用上的能力。
+限制：镜像必须包含 `entrypoint.sh` 里 `HUB_HOST` 的改动后重新构建；管理后台无法通过 OpenSandbox 读取镜像标签，所以镜像按声明接受；在 Linux 上，OpenSandbox 不会添加 `host-gateway`，沙箱需要其他方式访问 `host.docker.internal`，例如把 `GATEWAY_SANDBOX_CALLBACK_URL` 设为 docker0 的地址。home 卷：被清除数据的用户的旧卷会留在 Docker 主机上，因为 OpenSandbox 没有删除卷的接口；没有被任何 `home.volume` 引用的卷用 `docker volume rm` 删除。网关切回快照类后端时，用过卷的用户会从最后一份 `home.tar`（如果有）启动，而不是从卷。出网策略、gVisor/Kata、Kubernetes 是 server 支持、但这个后端还没用上的能力。
 
 ## E2B 后端（未验证）
 
@@ -567,6 +570,8 @@ Daytona、Kubernetes + gVisor/Kata、Firecracker 等，只需要实现 `backends
 | `keepalive(handle)` | 可选：延长后端自己的超时（如 E2B） |
 
 快照格式在各后端之间通用：一个以 `agent/` 为根的 tar，解压到 `/home`。`base.files_archive()` 把 `spec.files` 打成以 `/` 为根的 tar。然后在 `backends/__init__.py` 的 `create_backend` 里注册。
+
+平台能保留卷的后端可以设 `keeps_home = True`：把 `spec.home_volume` 卷挂到 `/home/agent`，新卷用 `spec.restore` 填充，`capture()` 返回 `{}`；卷名由 manager 记录，导入过的快照由 manager 改名停用。
 
 ## 开发与测试
 

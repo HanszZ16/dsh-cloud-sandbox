@@ -43,7 +43,8 @@ class SandboxSpec:
     trusted_host: str
     # Model credentials and endpoints visible inside the sandbox.
     env: dict[str, str]
-    # Previously captured archives keyed by STATE_PARTS name.
+    # Previously captured archives keyed by STATE_PARTS name. For a backend that
+    # keeps home (keeps_home), only used to fill a new home volume once.
     restore: dict[str, bytes] = field(default_factory=dict)
     # Absolute path -> content, written root-owned and read-only before dsh
     # starts: the admin policy and overlay under /etc/dsh-cloud.
@@ -52,6 +53,9 @@ class SandboxSpec:
     # Image (Docker reference, or E2B template) chosen by the user's group;
     # None selects the backend's configured default.
     image: str | None = None
+    # The user's home volume, for a backend that keeps home: stable across
+    # sandboxes until the user's data is purged. None for other backends.
+    home_volume: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,10 @@ class SandboxHandle:
 
 class SandboxBackend(ABC):
     name: str
+    # True when /home/agent lives in a per-user volume that outlives each machine:
+    # start() mounts spec.home_volume (filling a new one from spec.restore), and
+    # capture() only stops dsh and returns no archives.
+    keeps_home: bool = False
 
     @abstractmethod
     async def start(self, spec: SandboxSpec, progress: Progress = no_progress) -> SandboxHandle:
