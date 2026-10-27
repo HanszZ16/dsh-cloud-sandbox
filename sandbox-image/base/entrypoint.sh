@@ -22,7 +22,8 @@ ln -sfn "$HOME/workspaces" "$HOME/.dsh-cloud/documents/deepseek-harness"
 mkdir -p /tmp/playwright-mcp
 
 # The hub starts Chromium only on first use; idle it costs one small Node process.
-HUB_HOST="$BIND_IP" HUB_PORT="${HUB_PORT:-3081}" node /usr/local/lib/dsh-cloud/browser-hub/hub.mjs &
+# HUB_HOST overrides its bind address (the OpenSandbox backend reaches it on loopback).
+HUB_HOST="${HUB_HOST:-$BIND_IP}" HUB_PORT="${HUB_PORT:-3081}" node /usr/local/lib/dsh-cloud/browser-hub/hub.mjs &
 HUB_PID=$!
 python3 /usr/local/lib/dsh-cloud/provision.py bundles "$BIND_IP" "$PORT" &
 

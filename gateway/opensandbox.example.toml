@@ -1,0 +1,32 @@
+# opensandbox-server configuration for SANDBOX_BACKEND=opensandbox (Docker runtime).
+# Run: uvx opensandbox-server==1.1.1 --config opensandbox.toml
+# Replace the two values marked CHANGE; keep the rest unless you know why.
+
+[server]
+host = "127.0.0.1"
+port = 8090
+# CHANGE: a random secret; the gateway sends it as OPENSANDBOX_API_KEY.
+api_key = "change-me"
+
+[runtime]
+type = "docker"
+execd_image = "opensandbox/execd:v1.1.0"
+
+[storage]
+# CHANGE: the absolute path of the gateway's OPENSANDBOX_FILES_DIR. Each sandbox's
+# /etc/dsh-cloud is bind-mounted read-only from a directory under it.
+allowed_host_paths = ["/absolute/path/to/gateway/sandbox-files"]
+
+[docker]
+# Bridge mode publishes dsh (port 8080) and execd on host ports; publish them on
+# loopback only, since the gateway runs on the same host.
+network_mode = "bridge"
+publish_host = "127.0.0.1"
+port_range_min = 40000
+port_range_max = 40999
+drop_capabilities = ["AUDIT_WRITE", "MKNOD", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_TIME", "SYS_TTY_CONFIG"]
+no_new_privileges = true
+pids_limit = 1024
+
+[ingress]
+mode = "direct"

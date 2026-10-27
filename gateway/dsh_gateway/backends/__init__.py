@@ -20,7 +20,14 @@ def create_backend(settings: Settings) -> SandboxBackend:
         return E2BBackend(
             settings.e2b_template, settings.start_timeout_s, settings.idle_timeout_s, settings.instance_id
         )
-    raise RuntimeError(f"unknown SANDBOX_BACKEND {settings.backend!r}; use docker or e2b")
+    if settings.backend == "opensandbox":
+        from .opensandbox_backend import OpenSandboxBackend
+
+        return OpenSandboxBackend(
+            settings.opensandbox_url, settings.opensandbox_api_key, settings.docker_image,
+            settings.opensandbox_files_dir, settings.secret_key, settings.start_timeout_s, settings.instance_id,
+        )
+    raise RuntimeError(f"unknown SANDBOX_BACKEND {settings.backend!r}; use docker, e2b, or opensandbox")
 
 
 __all__ = [

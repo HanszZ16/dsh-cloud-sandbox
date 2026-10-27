@@ -437,6 +437,9 @@ dependencies = [
 e2b = [
     { name = "e2b" },
 ]
+opensandbox = [
+    { name = "opensandbox" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -451,11 +454,12 @@ requires-dist = [
     { name = "e2b", marker = "extra == 'e2b'", specifier = ">=1.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
+    { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = "==1.1.1" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "websockets", specifier = ">=13" },
 ]
-provides-extras = ["e2b"]
+provides-extras = ["e2b", "opensandbox"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -676,6 +680,15 @@ socks = [
 ]
 
 [[package]]
+name = "httpx-sse"
+version = "0.4.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
+]
+
+[[package]]
 name = "hyperframe"
 version = "6.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -721,6 +734,24 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "opensandbox"
+version = "1.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "httpx-sse" },
+    { name = "opentelemetry-api" },
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/77/36/79ff65e79725e10dd540af000e9148bc26428d0494bb954f406e5da79c74/opensandbox-1.1.1.tar.gz", hash = "sha256:2c62b338ed30c99d37fe88116f9e82f08e8e5c9ec8574dfef38d1ea5801f4b5e", size = 299154, upload-time = "2026-10-09T14:34:36.335Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/38/c18410a5466904ff9beef867e51d177e7f9a3240413f4412fb126481aee1/opensandbox-1.1.1-py3-none-any.whl", hash = "sha256:98eb0d7b57fdeabbbb5202d5e3a5261741f68fe47a631f0ec483b1566eb5fef8", size = 668271, upload-time = "2026-10-09T14:34:35.143Z" },
 ]
 
 [[package]]

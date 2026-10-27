@@ -161,7 +161,10 @@ async def _relay(upstream: httpx.Response, user_id: str):
 async def relay_websocket(websocket: WebSocket, record: SandboxRecord, uri: str) -> None:
     """Relay a browser WebSocket to `uri` inside the sandbox (no Host or cookie forwarding)."""
     try:
-        upstream = await ws_connect(uri, max_size=None, ping_interval=None, compression=None, proxy=None)
+        upstream = await ws_connect(
+            uri, additional_headers=record.handle.browser_headers or None,
+            max_size=None, ping_interval=None, compression=None, proxy=None,
+        )
     except Exception as err:
         log.warning("sandbox websocket %s for %s failed: %s", uri, record.handle.user_id, err)
         await websocket.close(code=1011)

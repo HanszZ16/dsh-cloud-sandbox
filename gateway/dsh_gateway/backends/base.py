@@ -71,6 +71,8 @@ class SandboxHandle:
     upstream_authority: str | None = None
     # The workspace browser hub's viewer endpoint (http(s)://...), when reachable.
     browser_url: str | None = None
+    # Headers the gateway sends when dialing browser_url (e.g. a sandbox proxy's access token).
+    browser_headers: dict[str, str] = field(default_factory=dict)
 
 
 class SandboxBackend(ABC):

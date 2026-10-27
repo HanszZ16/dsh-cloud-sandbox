@@ -13,7 +13,7 @@
 
 dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek-ai/dsh`。登录页、加载页、账号设置和管理后台用 React 编写，直接复用 dsh Web 的设计变量（颜色、圆角、字体、深色模式），和 dsh 界面风格一致。
 
-> 状态：PoC。Docker 后端已端到端验证（登录、加载页、账号设置、管理后台、插件和 MCP 下发、对话、退出保存、休眠与恢复、重启、孤儿回收）；E2B 后端已实现但**未用真实 key 验证**。
+> 状态：PoC。Docker 后端已端到端验证（登录、加载页、账号设置、管理后台、插件和 MCP 下发、对话、退出保存、休眠与恢复、重启、孤儿回收）；OpenSandbox 后端（试验）已在 OpenSandbox 的 Docker 运行时上端到端验证；E2B 后端已实现但**未用真实 key 验证**。
 
 ## 目录
 
@@ -33,6 +33,7 @@ dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek
 - [请求流程](#请求流程)
 - [安全模型](#安全模型)
 - [配置项](#配置项)
+- [OpenSandbox 后端](#opensandbox-后端试验)
 - [E2B 后端](#e2b-后端未验证)
 - [接入其他沙箱后端](#接入其他沙箱后端)
 - [开发与测试](#开发与测试)
@@ -124,6 +125,7 @@ dsh-cloud-sandbox/
     │   └── backends/
     │       ├── base.py            SandboxBackend 接口
     │       ├── docker_backend.py  Docker 实现（已验证）
+    │       ├── opensandbox_backend.py  OpenSandbox 实现（试验）
     │       └── e2b_backend.py     E2B 实现（未验证）
     └── tests/                     单元测试（不需要 Docker）
 ```
@@ -504,8 +506,10 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | `GATEWAY_STATE_DIR` | `state` | 快照目录 |
 | `GATEWAY_DB_PATH` | `data/gateway.db` | 账号数据库 |
 | `GATEWAY_WEB_DIST` | `../web/dist` | 前端构建产物目录 |
-| `SANDBOX_BACKEND` | `docker` | `docker` 或 `e2b` |
-| `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Docker 后端使用的镜像 |
+| `SANDBOX_BACKEND` | `docker` | `docker`、`opensandbox` 或 `e2b` |
+| `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Docker 和 OpenSandbox 后端使用的镜像 |
+| `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` | `http://127.0.0.1:8090` / 空 | OpenSandbox server 地址和 API key |
+| `OPENSANDBOX_FILES_DIR` | `sandbox-files` | 每个 OpenSandbox 沙箱只读 `/etc/dsh-cloud` 所在的宿主机目录，必须在 server 的 `allowed_host_paths` 里 |
 | `SANDBOX_E2B_TEMPLATE` | 空 | E2B 后端必填 |
 | `SANDBOX_HTTP_PROXY` | 空 | 沙箱出网代理（安装插件、npm 包、联网工具），例如 `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | 默认用户组的初始资源 |
@@ -514,6 +518,25 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | 默认用户组的初始空闲时限和最长运行时间 |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | 回收检查间隔 |
 | `SANDBOX_START_TIMEOUT_S` | `600` | 等待 dsh 启动的最长时间（包括首次安装 MCP 包） |
+
+## OpenSandbox 后端（试验）
+
+`gateway/dsh_gateway/backends/opensandbox_backend.py` 通过 [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) server 运行每个用户的沙箱，网关不再直接调用本机 Docker。已在 OpenSandbox 1.1.1 的 Docker 运行时上端到端验证：启动、经模型代理对话、远程浏览器及实时画面、退出时保存、登录时恢复、网关重启后的孤儿回收。网关的账号、用户组、插件、模型代理和快照和 Docker 后端一样工作。启用步骤：
+
+1. 安装依赖：`cd gateway && uv sync --extra opensandbox`；
+2. 把 `gateway/opensandbox.example.toml` 复制为 `opensandbox.toml`，填好 `api_key` 和 `allowed_host_paths`（`OPENSANDBOX_FILES_DIR` 的绝对路径），拉取 `opensandbox/execd:v1.1.0`，启动 server：`uvx opensandbox-server==1.1.1 --config opensandbox.toml`；
+3. 设置 `SANDBOX_BACKEND=opensandbox`、`OPENSANDBOX_URL`、`OPENSANDBOX_API_KEY`，以及固定的 `GATEWAY_SECRET_KEY`。
+
+沙箱里的布局：
+
+- server 把 execd 注入镜像，之后以镜像用户（`agent`）运行镜像自己的入口脚本。dsh 监听 8080 端口，server 把它发布到一个宿主机端口，网关照常代理；
+- 工作空间浏览器 hub 监听回环地址，通过 execd 的端口代理（`/proxy/3081`）访问；
+- 每个沙箱有自己的 execd 访问令牌（`EXECD_ACCESS_TOKEN`）。沙箱共用 Docker bridge 网络，没有令牌的话，一个用户的沙箱可以在另一个用户的沙箱里执行命令。令牌由 `GATEWAY_SECRET_KEY` 和沙箱元数据里的随机数派生，网关重启后仍能保存孤儿沙箱；
+- 入口进程等待启动标记，所以快照在 dsh 启动前恢复；dsh 退出后入口进程继续存活，所以快照在 dsh 关闭存储之后打包。快照通过 execd 的文件接口传输，格式和其他后端相同（`home.tar`）；
+- `/etc/dsh-cloud` 写到 `OPENSANDBOX_FILES_DIR` 下的一个目录，以只读方式挂载，因为镜像用户无法写 `/etc`；
+- server 不让沙箱过期（不设 `timeout`），和 Docker 后端一样由网关的空闲和最长时长决定。用户组的内存和 CPU 生效。
+
+限制：镜像必须包含 `entrypoint.sh` 里 `HUB_HOST` 的改动后重新构建；管理后台无法通过 OpenSandbox 读取镜像标签，所以镜像按声明接受；在 Linux 上，OpenSandbox 不会添加 `host-gateway`，沙箱需要其他方式访问 `host.docker.internal`，例如把 `GATEWAY_SANDBOX_CALLBACK_URL` 设为 docker0 的地址。出网策略、gVisor/Kata、Kubernetes、用命名卷保存 home 都是 server 支持、但这个后端还没用上的能力。
 
 ## E2B 后端（未验证）
 

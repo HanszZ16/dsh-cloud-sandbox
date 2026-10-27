@@ -15,6 +15,9 @@ dependencies = [
 
 [project.optional-dependencies]
 e2b = ["e2b>=1.0"]
+opensandbox = [
+    "opensandbox==1.1.1",
+]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24"]

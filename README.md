@@ -13,7 +13,7 @@ Gives every account its own **workspace**: an isolated sandbox running a complet
 
 dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm. The sign-in page, loading page, account settings, and admin console are written in React and reuse dsh Web's design tokens (colors, radii, fonts, dark mode), so they look like dsh.
 
-> Status: proof of concept. The Docker backend is verified end to end (sign-in, loading page, account settings, admin console, plugin and MCP provisioning, conversations, save on sign-out, sleep and resume, restart, orphan recovery). The E2B backend is implemented but **not verified with a real key**.
+> Status: proof of concept. The Docker backend is verified end to end (sign-in, loading page, account settings, admin console, plugin and MCP provisioning, conversations, save on sign-out, sleep and resume, restart, orphan recovery). The OpenSandbox backend (experimental) is verified end to end on OpenSandbox's Docker runtime. The E2B backend is implemented but **not verified with a real key**.
 
 ## Contents
 
@@ -33,6 +33,7 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Request flows](#request-flows)
 - [Security model](#security-model)
 - [Configuration](#configuration)
+- [OpenSandbox backend](#opensandbox-backend-experimental)
 - [E2B backend](#e2b-backend-unverified)
 - [Adding another sandbox backend](#adding-another-sandbox-backend)
 - [Development and tests](#development-and-tests)
@@ -125,6 +126,7 @@ dsh-cloud-sandbox/
     │   └── backends/
     │       ├── base.py            SandboxBackend interface
     │       ├── docker_backend.py  Docker implementation (verified)
+    │       ├── opensandbox_backend.py  OpenSandbox implementation (experimental)
     │       └── e2b_backend.py     E2B implementation (unverified)
     └── tests/                     Unit tests (no Docker needed)
 ```
@@ -505,8 +507,10 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 | `GATEWAY_STATE_DIR` | `state` | Snapshot directory |
 | `GATEWAY_DB_PATH` | `data/gateway.db` | Accounts database |
 | `GATEWAY_WEB_DIST` | `../web/dist` | Built web UI |
-| `SANDBOX_BACKEND` | `docker` | `docker` or `e2b` |
-| `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Image for the Docker backend |
+| `SANDBOX_BACKEND` | `docker` | `docker`, `opensandbox`, or `e2b` |
+| `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Image for the Docker and OpenSandbox backends |
+| `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` | `http://127.0.0.1:8090` / Empty | OpenSandbox server address and API key |
+| `OPENSANDBOX_FILES_DIR` | `sandbox-files` | Host directory for each OpenSandbox sandbox's read-only `/etc/dsh-cloud`; must be in the server's `allowed_host_paths` |
 | `SANDBOX_E2B_TEMPLATE` | Empty | Required for the E2B backend |
 | `SANDBOX_HTTP_PROXY` | Empty | Egress proxy for sandboxes (plugin and npm installs, web tools), e.g. `http://host.docker.internal:7897` |
 | `SANDBOX_MEM_LIMIT` / `SANDBOX_CPUS` | `2g` / `2` | Default group's initial resources |
@@ -515,6 +519,25 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | Default group's initial idle timeout and maximum lifetime |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | Reaper interval |
 | `SANDBOX_START_TIMEOUT_S` | `600` | How long to wait for dsh to start (including first-time MCP package installs) |
+
+## OpenSandbox backend (experimental)
+
+`gateway/dsh_gateway/backends/opensandbox_backend.py` runs each user's sandbox through an [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) server instead of the local Docker daemon. It is verified end to end on OpenSandbox 1.1.1 with the Docker runtime: start, conversations through the model proxy, the remote browser and its live view, save on sign-out, restore on sign-in, and orphan recovery after a gateway restart. The gateway's accounts, groups, plugins, model proxy, and snapshots work as with the Docker backend. To enable it:
+
+1. Install the extra: `cd gateway && uv sync --extra opensandbox`;
+2. Copy `gateway/opensandbox.example.toml` to `opensandbox.toml`, set `api_key` and `allowed_host_paths` (the absolute path of `OPENSANDBOX_FILES_DIR`), pull `opensandbox/execd:v1.1.0`, and start the server: `uvx opensandbox-server==1.1.1 --config opensandbox.toml`;
+3. Set `SANDBOX_BACKEND=opensandbox`, `OPENSANDBOX_URL`, `OPENSANDBOX_API_KEY`, and a fixed `GATEWAY_SECRET_KEY`.
+
+How the sandbox is laid out:
+
+- The server injects its execd daemon into the image and runs the image's own entry script after it, as the image user (`agent`). dsh listens on port 8080, which the server publishes on a host port; the gateway proxies to it as before;
+- The workspace browser hub listens on loopback and is reached through execd's port proxy (`/proxy/3081`);
+- Each sandbox gets its own execd access token (`EXECD_ACCESS_TOKEN`). Sandboxes share a Docker bridge network, and without the token one user's sandbox could run commands in another's. The token is derived from `GATEWAY_SECRET_KEY` and a nonce in the sandbox metadata, so a restarted gateway can still save orphans;
+- The entry process waits for a start flag, so the snapshot is restored before dsh starts, and it stays alive after dsh exits, so the snapshot is taken after dsh has closed its stores. Snapshots use execd file transfers and the same `home.tar` format as the other backends;
+- `/etc/dsh-cloud` is written to a directory under `OPENSANDBOX_FILES_DIR` and bind-mounted read-only, because the image user cannot write `/etc`;
+- The server never expires sandboxes (`timeout` is unset); the gateway's idle and lifetime limits decide, as with Docker. Group memory and CPU apply.
+
+Limits: the image must be built after the `HUB_HOST` change in `entrypoint.sh`; the admin console cannot inspect image labels through OpenSandbox, so images are accepted as declared; on Linux, sandboxes need another way to reach `host.docker.internal` (OpenSandbox does not add `host-gateway`), for example `GATEWAY_SANDBOX_CALLBACK_URL` set to the docker0 address. Egress policies, gVisor/Kata, Kubernetes, and named volumes for home are server options this backend does not use yet.
 
 ## E2B backend (unverified)
 
