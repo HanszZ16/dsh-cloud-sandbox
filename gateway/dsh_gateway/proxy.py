@@ -10,7 +10,9 @@ sandbox.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -31,8 +33,10 @@ _HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
     "trailer", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
 }
-# dsh Web pages load the gateway's control button (save and exit, back to portal).
-OVERLAY_TAG = b'<script src="/dsh-cloud-overlay.js" defer></script>'
+# dsh Web pages load the gateway's overlay (account entries, sign out, theme sync) from web/dist.
+OVERLAY_FILE = "dsh-cloud-overlay.js"
+# Overlay file -> ((mtime, size), content version), so each page does not rehash it.
+_overlay_versions: dict[Path, tuple[tuple[int, int], str]] = {}
 _WS_SKIP = _HOP_BY_HOP | {
     "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions",
     "sec-websocket-protocol", "origin", "cookie",
@@ -65,12 +69,33 @@ def rewrite_location(location: str, mount: str, upstream_url: str) -> str:
     return location
 
 
-def inject_overlay(html: bytes) -> bytes:
-    """`html` with the overlay script tag before </head>, or appended when there is none."""
+def overlay_tag(web_dist: Path) -> bytes:
+    """The overlay's script tag, its URL versioned by the file's content.
+
+    A rebuilt overlay gets a new URL, so a browser never keeps running an old
+    copy it cached before the overlay was served with cache-control.
+    """
+    path = web_dist / OVERLAY_FILE
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        version = "missing"
+    else:
+        key = (stat.st_mtime_ns, stat.st_size)
+        cached = _overlay_versions.get(path)
+        if cached is None or cached[0] != key:
+            cached = (key, hashlib.sha256(path.read_bytes()).hexdigest()[:12])
+            _overlay_versions[path] = cached
+        version = cached[1]
+    return f'<script src="/{OVERLAY_FILE}?v={version}" defer></script>'.encode()
+
+
+def inject_overlay(html: bytes, tag: bytes) -> bytes:
+    """`html` with the overlay script `tag` before </head>, or appended when there is none."""
     index = html.find(b"</head>")
     if index < 0:
-        return html + OVERLAY_TAG
-    return html[:index] + OVERLAY_TAG + html[index:]
+        return html + tag
+    return html[:index] + tag + html[index:]
 
 
 def _upstream_headers(request_headers, record: SandboxRecord, browser_host: str) -> dict[str, str]:
@@ -133,7 +158,7 @@ async def forward_http(
         # Pages are small; buffer one to add the overlay. aread() decodes the
         # transfer encoding, so the encoding and length headers no longer apply.
         try:
-            body = inject_overlay(await upstream.aread())
+            body = inject_overlay(await upstream.aread(), overlay_tag(request.app.state.gw.settings.web_dist))
         finally:
             await upstream.aclose()
         page = Response(body, status_code=upstream.status_code)

@@ -280,7 +280,8 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
             return JSONResponse({"detail": "not found"}, status_code=404)
         candidate = (settings.web_dist / path).resolve()
         if path and candidate.is_file() and settings.web_dist in candidate.parents:
-            return FileResponse(candidate)
+            # Unhashed files (the dsh page overlay, the favicon) are revalidated on every load.
+            return FileResponse(candidate, headers={"cache-control": "no-cache"})
         index = settings.web_dist / "index.html"
         if not index.exists():
             return HTMLResponse(_error_page("页面尚未构建", "在 web/ 目录运行 pnpm install && pnpm build"), status_code=503)
