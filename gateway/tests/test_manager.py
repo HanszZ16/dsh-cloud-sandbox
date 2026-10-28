@@ -203,3 +203,16 @@ async def test_purged_data_leaves_the_next_account_a_new_home_volume(settings, t
     await manager.ensure("carol", POLICY)
     (second,) = backend.live.values()
     assert second.home_volume != first.home_volume
+
+
+async def test_each_sandbox_gets_its_own_browser_hub_token(settings, tmp_path):
+    from dsh_gateway.manager import HUB_TOKEN_HEADER
+
+    backend = FakeBackend()
+    manager = SandboxManager(settings, backend, LocalStateStore(tmp_path))
+    alice = await manager.ensure("alice", POLICY)
+    bob = await manager.ensure("bob", POLICY)
+    for record in (alice, bob):
+        spec = backend.live[record.handle.sandbox_id]
+        assert record.handle.browser_headers[HUB_TOKEN_HEADER] == spec.env["HUB_TOKEN"]
+    assert alice.handle.browser_headers[HUB_TOKEN_HEADER] != bob.handle.browser_headers[HUB_TOKEN_HEADER]

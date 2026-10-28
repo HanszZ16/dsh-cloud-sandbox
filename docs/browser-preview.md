@@ -130,7 +130,7 @@ In the provisioning record `~/.dsh-cloud/provisioned.json`, `file:` entries carr
 | Playwright MCP output files | `/tmp/playwright-mcp` | ❌ |
 
 - The browser's debugging port (9222) and the agent endpoint (9223) listen only on `127.0.0.1` inside the sandbox.
-- The user endpoint (3081) is published only on the gateway host's `127.0.0.1`, and the gateway checks that the session belongs to that user.
+- The user endpoint (3081) is published only on the gateway host's `127.0.0.1`, and the gateway checks that the session belongs to that user. Other sandboxes on the same Docker network can reach the port directly, so the hub accepts only connections carrying the sandbox's own `HUB_TOKEN` in the `x-dsh-cloud-hub-token` header, which the gateway generates per sandbox and sends when relaying; without a token the hub refuses to listen outside loopback.
 - Users see and operate only the browser in their own workspace. Accounts signed in to in that browser are part of the user's workspace data and are saved with the snapshot like everything else; in production, store them encrypted as part of the [persistent volume plan](../README.md#before-launch-one-persistent-volume-per-user).
 
 ## Upgrades and versions

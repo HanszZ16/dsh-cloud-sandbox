@@ -20,11 +20,14 @@
  *                      {type:"activate", id} | {type:"new-tab"} | {type:"close-tab", id}
  *                      {type:"dialog", accept, promptText}
  *   Coordinates are page CSS pixels of the frame the viewer last received.
+ *   Every connection must carry HUB_TOKEN in the x-dsh-cloud-hub-token header:
+ *   other sandboxes on the same network can reach a non-loopback viewer port.
  *   A connection with ?watch=1 only receives {type:"agent"} events: it neither
  *   starts Chromium nor receives frames. dsh pages keep one open to bring the
  *   live view forward when the agent starts operating the browser.
  */
 import { spawn } from 'node:child_process'
+import { timingSafeEqual } from 'node:crypto'
 import { rmSync } from 'node:fs'
 import http from 'node:http'
 import { join } from 'node:path'
@@ -32,6 +35,9 @@ import { WebSocket, WebSocketServer } from 'ws'
 
 const HUB_HOST = process.env.HUB_HOST ?? '127.0.0.1'
 const HUB_PORT = Number(process.env.HUB_PORT ?? 3081)
+// The gateway sends this with every viewer connection; empty only on loopback.
+const HUB_TOKEN = process.env.HUB_TOKEN ?? ''
+const TOKEN_HEADER = 'x-dsh-cloud-hub-token'
 const CDP_PORT = Number(process.env.CDP_PORT ?? 9222)
 const AGENT_PORT = Number(process.env.AGENT_PORT ?? 9223)
 const CHROMIUM = process.env.CHROMIUM ?? '/usr/bin/chromium'
@@ -481,7 +487,24 @@ const viewerServer = http.createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'text/plain' })
   response.end('dsh-cloud workspace browser hub\n')
 })
-const viewerSockets = new WebSocketServer({ server: viewerServer, perMessageDeflate: false })
+if (HUB_TOKEN === '' && !['127.0.0.1', '::1', 'localhost'].includes(HUB_HOST)) {
+  console.error(`dsh-cloud browser: HUB_TOKEN is required when the viewer endpoint listens on ${HUB_HOST}`)
+  process.exit(1)
+}
+
+/** Whether an upgrade request carries the viewer token (always true on a loopback endpoint without one). */
+function authorized(request) {
+  if (HUB_TOKEN === '') return true
+  const presented = Buffer.from(String(request.headers[TOKEN_HEADER] ?? ''))
+  const expected = Buffer.from(HUB_TOKEN)
+  return presented.length === expected.length && timingSafeEqual(presented, expected)
+}
+
+const viewerSockets = new WebSocketServer({
+  server: viewerServer,
+  perMessageDeflate: false,
+  verifyClient: ({ req }, done) => (authorized(req) ? done(true) : done(false, 401, 'Unauthorized')),
+})
 viewerSockets.on('connection', (socket, request) => {
   if (new URL(request.url ?? '/', 'http://hub').searchParams.get('watch') === '1') {
     watchers.add(socket)

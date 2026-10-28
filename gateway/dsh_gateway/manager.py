@@ -20,6 +20,9 @@ from .store import LocalStateStore
 
 log = logging.getLogger("dsh_gateway.manager")
 
+# Header carrying the browser hub's viewer token (sandbox-image/base/browser-hub/hub.mjs).
+HUB_TOKEN_HEADER = "x-dsh-cloud-hub-token"
+
 
 @dataclass
 class SandboxRecord:
@@ -176,6 +179,9 @@ class SandboxManager:
 
     async def _start(self, user_id: str, policy: SandboxPolicy) -> SandboxRecord:
         model_token = "dshgw-" + secrets.token_urlsafe(32)
+        # The browser hub's viewer port is reachable from other sandboxes on the
+        # same network, so it accepts only this machine's token.
+        hub_token = secrets.token_urlsafe(32)
         callback = self._settings.sandbox_callback_url
         home_volume = None
         if self._backend.keeps_home:
@@ -194,6 +200,7 @@ class SandboxManager:
                 "DEEPSEEK_API_KEY": model_token,
                 "DEEPSEEK_BASE_URL": f"{callback}/llm/anthropic",
                 "DEEPSEEK_SEARCH_BASE_URL": f"{callback}/llm/anthropic/v1",
+                "HUB_TOKEN": hub_token,
             },
             restore=await self._store.load(user_id),
             files=policy.files,
@@ -212,6 +219,7 @@ class SandboxManager:
         except Exception as err:
             self._start_errors[user_id] = str(err) or type(err).__name__
             raise
+        handle.browser_headers = {**handle.browser_headers, HUB_TOKEN_HEADER: hub_token}
         if home_volume is not None and spec.restore:
             # The archive now lives on in the volume; keep it, but never load it again.
             self._store.retire_archives(user_id)
