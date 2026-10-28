@@ -67,10 +67,13 @@ COPY plugins/rag-kb /usr/local/lib/dsh-cloud/plugins/rag-kb
 # The Files panel's upload button; no dependencies, provisioned like rag-kb
 # with link:/usr/local/lib/dsh-cloud/plugins/workspace-upload.
 COPY plugins/workspace-upload /usr/local/lib/dsh-cloud/plugins/workspace-upload
+# Settings → MCP & skills; no dependencies, provisioned like workspace-upload.
+COPY plugins/workspace-capabilities /usr/local/lib/dsh-cloud/plugins/workspace-capabilities
 COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
 # The workspace browser dsh bundle (live-view tab + the Playwright MCP row),
 # provisioned with the spec file:/usr/local/lib/dsh-cloud/workspace-browser;
-# the gateway registers it, rag-kb, and workspace-upload as built-in plugins.
+# the gateway registers it, rag-kb, workspace-upload, and workspace-capabilities
+# as built-in plugins.
 COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
 COPY defaults.cordis.yml /usr/local/lib/dsh-cloud/defaults.cordis.yml

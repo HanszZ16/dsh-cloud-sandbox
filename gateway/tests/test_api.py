@@ -252,10 +252,10 @@ def test_version_1_database_is_migrated(tmp_path):
     (group,) = db.list_groups()
     assert group["name"] == "default" and group["image_id"] is None
     assert db.list_images() == []
-    assert sorted(p["key"] for p in db.list_plugins()) == ["rag-kb", "workspace-browser", "workspace-upload"]
-    assert len(group["plugin_ids"]) == 3
+    assert sorted(p["key"] for p in db.list_plugins()) == ["rag-kb", "workspace-browser", "workspace-capabilities", "workspace-upload"]
+    assert len(group["plugin_ids"]) == 4
     db.close()
-    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 4
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_built_in_plugins_are_registered_once_and_keep_admin_edits(tmp_path):
@@ -285,11 +285,11 @@ def test_built_in_plugins_are_registered_once_and_keep_admin_edits(tmp_path):
     plugins = {p["key"]: p for p in db.list_plugins()}
     assert plugins["rag-kb"]["config"] == {"spec": "@puwenhui/dsh-rag-kb"}
     (group,) = db.list_groups()
-    assert group["plugin_ids"] == [plugins["workspace-browser"]["id"], plugins["workspace-upload"]["id"]]
+    assert group["plugin_ids"] == [plugins[k]["id"] for k in ("workspace-browser", "workspace-upload", "workspace-capabilities")]
 
     db.delete_plugin(plugins["workspace-browser"]["id"])
     db.close()
-    assert [p["key"] for p in Database(path).list_plugins()] == ["rag-kb", "workspace-upload"]
+    assert [p["key"] for p in Database(path).list_plugins()] == ["rag-kb", "workspace-upload", "workspace-capabilities"]
 
 
 def test_an_upgrade_adds_only_the_built_in_plugins_its_version_introduced(tmp_path):
@@ -307,7 +307,7 @@ def test_an_upgrade_adds_only_the_built_in_plugins_its_version_introduced(tmp_pa
 
     db = Database(path)
     plugins = {p["key"]: p["id"] for p in db.list_plugins()}
-    assert sorted(plugins[k] for k in ("workspace-browser", "workspace-upload")) == sorted(db.get_group(group_id)["plugin_ids"])
+    assert sorted(plugins[k] for k in ("workspace-browser", "workspace-upload", "workspace-capabilities")) == sorted(db.get_group(group_id)["plugin_ids"])
 
 
 def test_a_new_gateway_gives_the_default_group_the_built_in_plugins(tmp_path):
@@ -316,7 +316,7 @@ def test_a_new_gateway_gives_the_default_group_the_built_in_plugins(tmp_path):
     db = Database(tmp_path / "gateway.db")
     group_id = db.ensure_default_group({"mem_limit": "2g", "cpus": 2, "idle_timeout_s": 900, "max_lifetime_s": 3600})
     keys = {p["id"]: p["key"] for p in db.list_plugins()}
-    assert sorted(keys[i] for i in db.get_group(group_id)["plugin_ids"]) == ["rag-kb", "workspace-browser", "workspace-upload"]
+    assert sorted(keys[i] for i in db.get_group(group_id)["plugin_ids"]) == ["rag-kb", "workspace-browser", "workspace-capabilities", "workspace-upload"]
 
 
 def test_workspace_browser_socket_is_for_the_owner_only(client):

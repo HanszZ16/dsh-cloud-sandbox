@@ -27,6 +27,7 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Workspace browser: watch and take over the agent's browser](#workspace-browser-watch-and-take-over-the-agents-browser)
 - [Knowledge base (RAG)](#knowledge-base-rag)
 - [Uploading files into a workspace](#uploading-files-into-a-workspace)
+- [MCP and skills page](#mcp-and-skills-page)
 - [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
 - [Where user data lives](#where-user-data-lives)
 - [Sandbox lifecycle](#sandbox-lifecycle)
@@ -363,6 +364,17 @@ The plugin is `sandbox-image/base/plugins/workspace-upload`, a built-in plugin l
 - dsh's web server ends a request after 5 minutes (Node.js's default `requestTimeout`), so one file must arrive within that time: about 0.7 MB/s for a 200 MB file.
 - No total quota yet. Until per-user volumes arrive, every uploaded byte is part of the snapshot taken when the workspace sleeps, so large files make sleep and resume slower.
 - A user whose project is `/home/agent` itself (one registered before projects moved to `~/workspaces`) uploads into the home directory.
+
+## MCP and skills page
+
+dsh Web shows no MCP status, so **Settings → MCP & skills** lists the workspace's MCP servers and skills, read-only:
+
+- **MCP servers**, each with its source (**Built-in**: the remote browser; **Team**: provisioned in the admin console; **Personal**: added by the user) and state: online with its tool count, starting, failed to start, no tools available (connecting, reconnecting, or given up after repeated failures), or disabled. Expanding a server shows its command or URL, the names (never the values) of its environment variables and headers, its tools, and its recent log messages, such as `spawn ... ENOENT` when the command does not exist. Values that look like secrets are masked.
+- **Skills** from the project, user, and other roots, with where each comes from, its file, and whether the model uses it, `/name` invokes it, or both. Project skills are listed for every project under `~/workspaces` and every Session's directory.
+
+The page reloads every 5 seconds while shown. The plugin is in `sandbox-image/base/plugins/workspace-capabilities` (spec `link:/usr/local/lib/dsh-cloud/plugins/workspace-capabilities`, key `workspace-capabilities`); the gateway registers it when it creates the database or upgrades to schema 5 and assigns it to the default group. Its README lists the dsh internals it reads.
+
+dsh's Settings **Open configuration file** button opens the file in a desktop editor on dsh's own machine, which in a sandbox has none; dsh shows it only when the page's host is loopback (for example `localhost`), and the gateway's page overlay hides it there.
 
 ## Provisioning plugins, MCP servers, and config patches
 

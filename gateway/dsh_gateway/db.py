@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS groups (
@@ -102,6 +102,7 @@ ALTER TABLE groups ADD COLUMN image_id INTEGER REFERENCES images(id);
     # Register the built-in plugins each version introduced; see _seed_builtin_plugins.
     3: "",
     4: "",
+    5: "",
 }
 
 # Plugins shipped in the sandbox image. Every catalog gets each one once, when
@@ -132,6 +133,14 @@ BUILTIN_PLUGINS = (
         "description": "工作区文件面板顶部的上传按钮：把文件或整个文件夹上传到当前项目",
         "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/workspace-upload"},
         "since": 4,
+    },
+    {
+        "key": "workspace-capabilities",
+        "kind": "bundle",
+        "name": "MCP 与技能",
+        "description": "设置里的「MCP 与技能」页：查看工作空间的 MCP 服务器是否在线、有哪些工具和最近日志，以及有哪些技能",
+        "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/workspace-capabilities"},
+        "since": 5,
     },
 )
 

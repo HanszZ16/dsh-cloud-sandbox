@@ -1,0 +1,7 @@
+# dsh-cloud workspace capabilities bundle: one host row (the read-only
+# overview route) whose package also serves the client face (the Settings
+# section "MCP 与技能"). logPath must match where sandbox-image/base/entrypoint.sh
+# copies dsh's output; logLines and maxProjects bound the report.
+- insert:
+    - id: workspace-capabilities
+      name: dsh-cloud-workspace-capabilities
