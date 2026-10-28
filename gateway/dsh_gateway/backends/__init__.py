@@ -13,7 +13,9 @@ def create_backend(settings: Settings) -> SandboxBackend:
     if settings.backend == "docker":
         from .docker_backend import DockerBackend
 
-        return DockerBackend(settings.docker_image, settings.start_timeout_s, settings.instance_id)
+        return DockerBackend(
+            settings.docker_image, settings.start_timeout_s, settings.instance_id, settings.docker_runtime,
+        )
     if settings.backend == "e2b":
         from .e2b_backend import E2BBackend
 

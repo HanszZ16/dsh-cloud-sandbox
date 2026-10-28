@@ -30,3 +30,8 @@ pids_limit = 1024
 
 [ingress]
 mode = "direct"
+
+# Optional: run sandboxes under gVisor (see the README's gVisor section).
+# [secure_runtime]
+# type = "gvisor"
+# docker_runtime = "runsc"

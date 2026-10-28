@@ -27,6 +27,8 @@ class Settings:
     llm_allow_passthrough: bool
     backend: str
     docker_image: str
+    # OCI runtime for Docker sandboxes, e.g. runsc (gVisor); empty is the daemon's default (runc).
+    docker_runtime: str
     e2b_template: str
     # OpenSandbox server root (http://host:port) and its API key.
     opensandbox_url: str
@@ -96,6 +98,7 @@ def load_settings() -> Settings:
         llm_allow_passthrough=os.environ.get("LLM_ALLOW_PASSTHROUGH", "1") not in {"0", "false", "no"},
         backend=os.environ.get("SANDBOX_BACKEND", "docker"),
         docker_image=os.environ.get("SANDBOX_DOCKER_IMAGE", "dsh-sandbox:dev"),
+        docker_runtime=os.environ.get("SANDBOX_DOCKER_RUNTIME", "").strip(),
         e2b_template=os.environ.get("SANDBOX_E2B_TEMPLATE", ""),
         opensandbox_url=os.environ.get("OPENSANDBOX_URL", "http://127.0.0.1:8090").rstrip("/"),
         opensandbox_api_key=os.environ.get("OPENSANDBOX_API_KEY", ""),

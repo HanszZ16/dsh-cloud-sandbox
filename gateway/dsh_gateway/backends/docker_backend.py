@@ -54,9 +54,16 @@ def rooted(archive: bytes, parent: str) -> bytes:
 class DockerBackend(SandboxBackend):
     name = "docker"
 
-    def __init__(self, image: str, start_timeout_s: int, instance_id: str) -> None:
+    def __init__(self, image: str, start_timeout_s: int, instance_id: str, runtime: str = "") -> None:
         self._client = docker.from_env()
         self._image = image
+        # OCI runtime registered with the daemon (e.g. runsc for gVisor); empty uses the daemon default.
+        self._runtime = runtime
+        if runtime and runtime not in (self._client.info().get("Runtimes") or {}):
+            raise RuntimeError(
+                f"SANDBOX_DOCKER_RUNTIME={runtime} is not a runtime of this Docker daemon; "
+                "register it in the daemon's runtimes (see the README's gVisor section) or leave it empty"
+            )
         self._start_timeout_s = start_timeout_s
         self._instance_id = instance_id
 
@@ -102,6 +109,7 @@ class DockerBackend(SandboxBackend):
             pids_limit=1024,
             # Reaps the entrypoint's background plugin provisioner.
             init=True,
+            runtime=self._runtime or None,
         )
 
     async def _wait_listening(self, container: Container) -> None:

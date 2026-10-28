@@ -33,6 +33,7 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Request flows](#request-flows)
 - [Security model](#security-model)
 - [Configuration](#configuration)
+- [gVisor](#gvisor-stronger-sandbox-isolation)
 - [OpenSandbox backend](#opensandbox-backend-experimental)
 - [E2B backend](#e2b-backend-unverified)
 - [Adding another sandbox backend](#adding-another-sandbox-backend)
@@ -482,7 +483,8 @@ Environment set inside each sandbox:
 
 - **Accounts**: passwords are hashed with salted scrypt; session tokens are random and stored only as hashes; disabling an account or resetting its password deletes all its sessions; unknown usernames and wrong passwords take the same time.
 - **Sandbox isolation**: one container per user, running as the non-root user `agent` (uid 1001), with resource limits from the user's group and at most 1024 processes.
-- **Ports**: dsh's port is published only on the gateway host's `127.0.0.1` and is reachable only through the gateway.
+- **Ports**: dsh's port is published only on the gateway host's `127.0.0.1` and is reachable only through the gateway. Sandboxes share a Docker network, so every port a sandbox listens on outside loopback needs its own authentication: dsh checks its launch token, and the workspace browser hub accepts only a per-sandbox token (`HUB_TOKEN`) that the gateway sends when relaying the live view.
+- **Kernel isolation (optional)**: with [gVisor](#gvisor-stronger-sandbox-isolation) each sandbox runs on its own user-space kernel.
 - **User isolation**: `/u/<user>/` requires that user's valid session, otherwise the browser goes back to sign-in; WebSockets are checked the same way.
 - **Credentials**: the shared key and user keys stay on the gateway; the gateway's session cookie is stripped before forwarding; dsh's own cookie is valid only under `/u/<user>/`.
 - **Limits of admin provisioning**: rows in the admin overlay are guaranteed to apply, but users have a shell in their sandbox and can add MCP servers or plugins themselves (by design). Restrictions that must be enforced belong outside the sandbox: models only through the gateway (done), an egress allow-list, and secrets kept out of sandboxes.
@@ -511,6 +513,7 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 | `GATEWAY_WEB_DIST` | `../web/dist` | Built web UI |
 | `SANDBOX_BACKEND` | `docker` | `docker`, `opensandbox`, or `e2b` |
 | `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Image for the Docker and OpenSandbox backends |
+| `SANDBOX_DOCKER_RUNTIME` | Empty | Docker backend's OCI runtime, e.g. `runsc` for [gVisor](#gvisor-stronger-sandbox-isolation); empty is Docker's default (runc) |
 | `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` | `http://127.0.0.1:8090` / Empty | OpenSandbox server address and API key |
 | `OPENSANDBOX_FILES_DIR` | `sandbox-files` | Host directory for each OpenSandbox sandbox's read-only `/etc/dsh-cloud`; must be in the server's `allowed_host_paths` |
 | `OPENSANDBOX_HOME_VOLUMES` | `1` | Keep each user's `/home/agent` in a volume; `0` archives it to `home.tar` like the Docker backend |
@@ -522,6 +525,28 @@ Everything is set through `gateway/.env` (or the environment). Group resources, 
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | Default group's initial idle timeout and maximum lifetime |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | Reaper interval |
 | `SANDBOX_START_TIMEOUT_S` | `600` | How long to wait for dsh to start (including first-time MCP package installs) |
+
+## gVisor (stronger sandbox isolation)
+
+By default sandboxes run under Docker's runc, sharing the host kernel. [gVisor](https://gvisor.dev) runs each sandbox on its own user-space kernel (`runsc`), so a kernel exploit inside a workspace does not reach the host. dsh, Chromium, LibreOffice, and the knowledge base's onnxruntime all work under it.
+
+1. Install `runsc` from the release tarball (`gvisor.tar.bz2` and its `.sha512` from `https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)`; keep `runsc` and `gvisor-bin/` together). Verified with `release-20261026.0`.
+2. Register it with Docker as `runsc`, with `--overlay2=none`:
+
+   ```json
+   { "runtimes": { "runsc": { "path": "/usr/local/bin/runsc", "runtimeArgs": ["--overlay2=none"] } } }
+   ```
+
+   On Linux this goes in `/etc/docker/daemon.json`, then `systemctl restart docker`. On OrbStack (macOS) it goes in `~/.orbstack/config/docker.json` with `path` pointing at a directory under your home (for example `~/.orbstack/gvisor/runsc`), then **`orb stop && orb start`**: restarting only the Docker engine (`orb restart docker`) left containers without network.
+3. Set `SANDBOX_DOCKER_RUNTIME=runsc` for the Docker backend; the gateway refuses to start if the daemon has no such runtime. For the OpenSandbox backend, add to the server's TOML:
+
+   ```toml
+   [secure_runtime]
+   type = "gvisor"
+   docker_runtime = "runsc"
+   ```
+
+`--overlay2=none` is required for the Docker backend: by default gVisor keeps a container's writes in its own overlay, which Docker cannot read, so sleep would save the image's empty home instead of the user's. With it, writes go to Docker's storage as with runc. The OpenSandbox backend captures home from inside the sandbox or keeps it in a volume, so it works either way.
 
 ## OpenSandbox backend (experimental)
 

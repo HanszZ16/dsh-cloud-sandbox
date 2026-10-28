@@ -33,6 +33,7 @@ dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek
 - [请求流程](#请求流程)
 - [安全模型](#安全模型)
 - [配置项](#配置项)
+- [gVisor](#gvisor更强的沙箱隔离)
 - [OpenSandbox 后端](#opensandbox-后端试验)
 - [E2B 后端](#e2b-后端未验证)
 - [接入其他沙箱后端](#接入其他沙箱后端)
@@ -481,7 +482,8 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 
 - **账号**：密码用 scrypt 加盐哈希；会话 token 随机生成，数据库只存哈希；停用账号或重置密码会删除该用户的全部会话；不存在的用户名和错误密码耗时相同。
 - **沙箱隔离**：每个用户一个容器，以非 root 用户 `agent`（uid 1001）运行，资源上限来自用户组，进程数上限 1024。
-- **端口**：dsh 的端口只发布在网关主机的 `127.0.0.1` 上，外部无法直接访问，只能经过网关。
+- **端口**：dsh 的端口只发布在网关主机的 `127.0.0.1` 上，外部无法直接访问，只能经过网关。沙箱之间共用 Docker 网络，所以沙箱在回环地址以外监听的每个端口都要有自己的鉴权：dsh 校验启动令牌；工作空间浏览器 hub 只接受每个沙箱自己的令牌（`HUB_TOKEN`），由网关转发实时画面时带上。
+- **内核隔离（可选）**：开启 [gVisor](#gvisor更强的沙箱隔离) 后，每个沙箱跑在自己的用户态内核上。
 - **用户隔离**：访问 `/u/<user>/` 必须持有该用户的有效会话，否则跳回登录页；WebSocket 同样校验。
 - **凭据**：共享 key 和用户 key 都只在网关；网关登录 cookie 在转发前剥离；dsh 自己的 cookie 只在 `/u/<user>/` 路径下有效。
 - **管理员下发的边界**：管理员 overlay 里的行能保证生效，但用户在沙箱里有 shell，可以自己新增 MCP 或插件（这是设计如此）。真正需要强制的限制要放在沙箱外：模型只能经过网关（已做到）、出网白名单、敏感凭据不进沙箱。
@@ -510,6 +512,7 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | `GATEWAY_WEB_DIST` | `../web/dist` | 前端构建产物目录 |
 | `SANDBOX_BACKEND` | `docker` | `docker`、`opensandbox` 或 `e2b` |
 | `SANDBOX_DOCKER_IMAGE` | `dsh-sandbox:dev` | Docker 和 OpenSandbox 后端使用的镜像 |
+| `SANDBOX_DOCKER_RUNTIME` | 空 | Docker 后端的 OCI 运行时，例如 [gVisor](#gvisor更强的沙箱隔离) 的 `runsc`；为空时用 Docker 默认的 runc |
 | `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` | `http://127.0.0.1:8090` / 空 | OpenSandbox server 地址和 API key |
 | `OPENSANDBOX_FILES_DIR` | `sandbox-files` | 每个 OpenSandbox 沙箱只读 `/etc/dsh-cloud` 所在的宿主机目录，必须在 server 的 `allowed_host_paths` 里 |
 | `OPENSANDBOX_HOME_VOLUMES` | `1` | 把每个用户的 `/home/agent` 放在卷里；设为 `0` 则和 Docker 后端一样打包成 `home.tar` |
@@ -521,6 +524,28 @@ dsh 的配置分层是：bundle → profile 的 `cordis.patch.yml` → home 的 
 | `SANDBOX_IDLE_TIMEOUT_S` / `SANDBOX_MAX_LIFETIME_S` | `900` / `28800` | 默认用户组的初始空闲时限和最长运行时间 |
 | `SANDBOX_REAP_INTERVAL_S` | `15` | 回收检查间隔 |
 | `SANDBOX_START_TIMEOUT_S` | `600` | 等待 dsh 启动的最长时间（包括首次安装 MCP 包） |
+
+## gVisor（更强的沙箱隔离）
+
+默认情况下沙箱用 Docker 的 runc 运行，和宿主机共用内核。[gVisor](https://gvisor.dev) 让每个沙箱跑在自己的用户态内核（`runsc`）上，工作空间里的内核漏洞利用到不了宿主机。dsh、Chromium、LibreOffice 和知识库的 onnxruntime 在 gVisor 下都能正常工作。
+
+1. 从发布包安装 `runsc`：从 `https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)` 下载 `gvisor.tar.bz2` 和对应的 `.sha512` 校验后解压，`runsc` 和 `gvisor-bin/` 要放在一起。验证版本为 `release-20261026.0`。
+2. 以 `runsc` 为名注册到 Docker，并带上 `--overlay2=none`：
+
+   ```json
+   { "runtimes": { "runsc": { "path": "/usr/local/bin/runsc", "runtimeArgs": ["--overlay2=none"] } } }
+   ```
+
+   Linux 上写进 `/etc/docker/daemon.json`，然后 `systemctl restart docker`。OrbStack（macOS）上写进 `~/.orbstack/config/docker.json`，`path` 指向你 home 下的目录（例如 `~/.orbstack/gvisor/runsc`），然后执行 **`orb stop && orb start`**：只重启 Docker 引擎（`orb restart docker`）会导致容器没有网络。
+3. Docker 后端设置 `SANDBOX_DOCKER_RUNTIME=runsc`；Docker 里没有这个运行时的话，网关会拒绝启动。OpenSandbox 后端在 server 的 TOML 里加上：
+
+   ```toml
+   [secure_runtime]
+   type = "gvisor"
+   docker_runtime = "runsc"
+   ```
+
+Docker 后端必须加 `--overlay2=none`：gVisor 默认把容器里的写入放在它自己的覆盖层里，Docker 读不到，休眠时保存下来的会是镜像里空的 home，而不是用户的数据。加上之后写入和 runc 一样落到 Docker 的存储里。OpenSandbox 后端是在沙箱内部打包 home，或者把 home 放在卷里，所以加不加都能正常工作。
 
 ## OpenSandbox 后端（试验）
 
