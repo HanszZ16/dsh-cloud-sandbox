@@ -88,7 +88,7 @@ dsh-cloud-sandbox/
 ├── sandbox-image/                 Workspace images
 │   ├── build.sh                   Builds the base image, then every team image in variants/ FROM it
 │   ├── base/                      Base image (also the default image)
-│   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + CJK fonts, user agent, compatibility labels
+│   │   ├── Dockerfile             node:24 + dsh + pnpm + Chromium + LibreOffice + python3-venv + CJK fonts, user agent, compatibility labels
 │   │   ├── entrypoint.sh          Install MCP packages → prepare ~/workspaces → start the browser hub and dsh (with the workspace layout patch and the admin overlay) → install default plugins in the background; forwards stop signals to both
 │   │   ├── defaults.cordis.yml   dsh patch for every user: first project in ~/workspaces, right-sidebar Browser on
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
@@ -166,7 +166,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.1-rc.2`). The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
+To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.2-alpha.2`; dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1). The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
 
 The base image also carries the knowledge base plugin and its Chinese embedding model, which is downloaded from Hugging Face during the build. Where huggingface.co is unreachable, add `--build-arg HF_ENDPOINT=https://hf-mirror.com`; where the npm registry is unreliable, `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` applies to the plugins installed into the image.
 
@@ -323,7 +323,8 @@ The plugin is `sandbox-image/base/plugins/rag-kb`, our fork of [`@puwenhui/dsh-r
 - **Side panel:** upload (button or drag and drop), list with size, chunk count, and indexing progress, delete, and re-index all. Uploads go browser → gateway → the plugin's route in the user's dsh; the gateway checks the sign-in, the file size (`KB_MAX_FILE_MB`, default 50), and the user's total (`KB_QUOTA_MB`, default 500) before any byte reaches the workspace. The plugin saves the file to `~/knowledge/` and indexes it.
 - **`~/knowledge/` is watched:** files put there any other way (Files panel, terminal, the agent) are indexed, and deleting one removes its document. Deleting a document in the panel also deletes its file there.
 - **Conversation:** the agent's `knowledge_manage` tool adds files or directories (read through dsh's filesystem service, relative to the session's directory), saves conversation content, removes, and re-indexes.
-- **Settings → Built-in plugins → Knowledge base:** description (the agent reads it before searching), results per search, similarity threshold, reranker. They apply to the next search.
+- **Settings → Built-in plugins → Knowledge base:** description (the agent reads it before searching), when to search, results per search, similarity threshold, reranker. They apply to the next search.
+- **When to search:** by default (Only when asked) the agent calls `knowledge_search` only when the user explicitly asks it to look in the knowledge base ("在知识库里查…", "根据我的文档…"); ordinary questions and 搜一下 requests do not search it first. Proactive makes the agent search first whenever a question may concern its documents.
 
 **How it is shipped:**
 
@@ -628,7 +629,7 @@ docker exec -it <container> bash
 - **Experience**: installation progress of preinstalled plugins is only in container logs; opening a deep link when dsh needs a new cookie lands on dsh's home page instead of the link;
 - **Capacity**: add a warm pool to cut cold-start time;
 - **dsh menu injection**: the account entries depend on the DOM of dsh's More menu (the trigger's `data-signed-out`, items with `role="menuitem"`, the Sign in label). If a dsh update leaves the menu without account settings and sign-out, adjust `web/public/dsh-cloud-overlay.js`;
-- **dsh version**: verified with `@deepseek-ai/dsh@0.2.1-rc.2`; dsh is still in preview, so after upgrading re-verify the reverse proxy, the launch-token flow, `--patch`, and `dsh plugin add`, and refresh the design tokens in `web/src/theme/`.
+- **dsh version**: verified with `@deepseek-ai/dsh@0.2.2-alpha.2`; dsh is still in preview, so after upgrading re-verify the reverse proxy, the launch-token flow, `--patch`, and `dsh plugin add`, and refresh the design tokens in `web/src/theme/`.
 
 ## Before launch: one persistent volume per user
 

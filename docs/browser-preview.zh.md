@@ -138,7 +138,7 @@ agent 和用户连的是**同一个 Chromium**，所以用户看到的就是 age
 - 改了 `workspace-browser/` 里的文件后，**提高 `package.json` 的版本号**，重新构建镜像。用户下次启动工作空间时自动更新。
 - 改了中转服务（`browser-hub/`）只需要重建镜像，它属于镜像本身。
 - 网关的改动需要重启网关；由旧版网关创建、没有发布 3081 端口的工作空间，重启一次就会用新代码重新创建。
-- `client.js` 依赖 dsh 预览阶段的接口：`sidebarRightTabs`、`sidebar.right.pane.tab(.title)` 插槽、`locale`、共享模块 `@deepseek-ai/dsh-client-ui-primitives` 里的图标名称、客户端模块格式。**升级 dsh 后需要回归一次**。验证于 `@deepseek-ai/dsh@0.2.1-rc.2`。
+- `client.js` 依赖 dsh 预览阶段的接口：`sidebarRightTabs`、`sidebar.right.pane.tab(.title)` 插槽、`locale`、共享模块 `@deepseek-ai/dsh-client-ui-primitives` 里的图标名称、客户端模块格式。**升级 dsh 后需要回归一次**。验证于 `@deepseek-ai/dsh@0.2.2-alpha.2`。
 
 ## 已知限制
 

@@ -79,7 +79,7 @@ def test_last_admin_cannot_be_removed(client):
 def test_assigned_plugins_reach_the_sandbox_files(client, backend):
     login(client, "root", "rootpass1")
     bundle = client.post("/api/admin/plugins", json={
-        "key": "codex", "kind": "bundle", "name": "Codex", "config": {"spec": "@deepseek-ai/dsh-subagent-codex@0.2.1-rc.2"},
+        "key": "codex", "kind": "bundle", "name": "Codex", "config": {"spec": "@deepseek-ai/dsh-subagent-codex@0.2.2-alpha.2"},
     }).json()
     mcp = client.post("/api/admin/plugins", json={
         "key": "memory", "kind": "mcp", "name": "Memory",
@@ -100,7 +100,7 @@ def test_assigned_plugins_reach_the_sandbox_files(client, backend):
     client.post("/api/me/sandbox/start")
     (spec,) = [s for s in backend.live.values()]
     policy = json.loads(spec.files[POLICY_PATH])
-    assert policy["bundles"] == [{"key": "codex", "spec": "@deepseek-ai/dsh-subagent-codex@0.2.1-rc.2"}]
+    assert policy["bundles"] == [{"key": "codex", "spec": "@deepseek-ai/dsh-subagent-codex@0.2.2-alpha.2"}]
     assert policy["npm"] == [{"key": "memory", "spec": "@modelcontextprotocol/server-memory@2026.7.4"}]
     overlay = spec.files[OVERLAY_PATH].decode()
     assert '"serverName": "memory"' in overlay and "dsh-cloud-mcp-memory" in overlay
@@ -217,7 +217,7 @@ def test_group_image_must_match_the_default_and_reaches_the_sandbox(client, back
     assert "dsh 版本" in client.post("/api/admin/images", json={"name": "o", "ref": "team/old:1"}).json()["detail"]
     assert client.post("/api/admin/images", json={"name": "x", "ref": "team/missing:1"}).status_code == 400
     image = client.post("/api/admin/images", json={"name": "数据科学", "ref": "team/ds:1"}).json()
-    assert image["dsh_version"] == "0.2.1-rc.2"
+    assert image["dsh_version"] == "0.2.2-alpha.2"
     assert client.patch(f"/api/admin/images/{image['id']}", json={"ref": "team/ds:2"}).status_code == 400
 
     group = client.get("/api/admin/groups").json()[0]

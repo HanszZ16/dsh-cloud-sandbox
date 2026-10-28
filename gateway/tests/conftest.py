@@ -12,7 +12,7 @@ class FakeBackend(SandboxBackend):
         self.fail_capture = fail_capture
         self.orphans: list[SandboxHandle] = []
         self.steps: list[str] = []
-        base = {"dsh-cloud.contract": "1", "dsh-cloud.dsh-version": "0.2.1-rc.2", "dsh-cloud.runtime": "node:22-bookworm-slim"}
+        base = {"dsh-cloud.contract": "1", "dsh-cloud.dsh-version": "0.2.2-alpha.2", "dsh-cloud.runtime": "node:24.22.1-bookworm-slim"}
         # Image reference -> labels; None is the default image.
         self.images: dict[str | None, dict[str, str]] = {None: base}
 

@@ -138,7 +138,7 @@ In the provisioning record `~/.dsh-cloud/provisioned.json`, `file:` entries carr
 - After changing files in `workspace-browser/`, **bump the version in its `package.json`** and rebuild the image. Users get the update the next time their workspace starts.
 - Changes to the hub (`browser-hub/`) only need an image rebuild; it is part of the image.
 - Gateway changes need a gateway restart; workspaces created by an older gateway, without port 3081 published, are recreated on the new code after one restart.
-- `client.js` relies on dsh's pre-stable interfaces: `sidebarRightTabs`, the `sidebar.right.pane.tab(.title)` slots, `locale`, the icon names in the shared module `@deepseek-ai/dsh-client-ui-primitives`, and the client module format. **Re-verify after upgrading dsh.** Verified with `@deepseek-ai/dsh@0.2.1-rc.2`.
+- `client.js` relies on dsh's pre-stable interfaces: `sidebarRightTabs`, the `sidebar.right.pane.tab(.title)` slots, `locale`, the icon names in the shared module `@deepseek-ai/dsh-client-ui-primitives`, and the client module format. **Re-verify after upgrading dsh.** Verified with `@deepseek-ai/dsh@0.2.2-alpha.2`.
 
 ## Known limitations
 

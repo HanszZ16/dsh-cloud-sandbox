@@ -87,7 +87,7 @@ dsh-cloud-sandbox/
 ├── sandbox-image/                 工作空间镜像
 │   ├── build.sh                   先构建基础镜像，再基于它构建 variants/ 下的每个团队镜像
 │   ├── base/                      基础镜像（也是默认镜像）
-│   │   ├── Dockerfile             node:22 + dsh + pnpm + Chromium + LibreOffice + python3-venv + 中文字体，用户 agent，兼容性标签
+│   │   ├── Dockerfile             node:24 + dsh + pnpm + Chromium + LibreOffice + python3-venv + 中文字体，用户 agent，兼容性标签
 │   │   ├── entrypoint.sh          安装 MCP 包 → 准备 ~/workspaces → 启动浏览器中转服务和 dsh（带工作区布局补丁和管理员 overlay）→ 后台安装默认插件；停止时把信号转给两者
 │   │   ├── defaults.cordis.yml   所有用户的 dsh 补丁：第一个项目在 ~/workspaces，打开右侧边栏浏览器
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
@@ -165,7 +165,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.1-rc.2`。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
+要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.2-alpha.2`；dsh 0.2.2 要求 Node.js 24.9 以上，镜像用的是 Node.js 24.22.1。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
 
 基础镜像还自带知识库插件和中文向量模型，模型在构建时从 Hugging Face 下载。访问不了 huggingface.co 时，加 `--build-arg HF_ENDPOINT=https://hf-mirror.com`；npm 官方源不稳定时，加 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com`（只用于装进镜像的插件）。
 
@@ -322,7 +322,8 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 - **侧边面板：** 上传（按钮或拖拽）、列表（大小、分块数、索引进度）、删除、全部重建索引。上传路径是 浏览器 → 网关 → 用户 dsh 里插件的接口；网关先检查登录、单个文件大小（`KB_MAX_FILE_MB`，默认 50）和这个用户的总量（`KB_QUOTA_MB`，默认 500），不合格的请求一个字节都不会进工作空间。插件把文件存到 `~/knowledge/` 并建索引。
 - **`~/knowledge/` 会被监视：** 用其他方式放进去的文件（文件面板、终端、agent）会自动索引，在这里删掉文件也会从知识库删除。在面板里删除文档也会删掉这里的文件。
 - **对话：** agent 的 `knowledge_manage` 工具可以添加文件或目录（通过 dsh 的文件系统服务读取，相对路径按当前会话的目录解析）、保存对话内容、删除、重建索引。
-- **设置 → 内置插件 → 知识库：** 知识库描述（agent 检索前会读）、检索返回条数、相似度阈值、reranker。保存后下一次检索生效。
+- **设置 → 内置插件 → 知识库：** 知识库描述（agent 检索前会读）、检索时机、检索返回条数、相似度阈值、reranker。保存后下一次检索生效。
+- **检索时机：** 默认「仅在要求时」，只有用户明确说「在知识库里查…」「根据我的文档…」时 agent 才调用 `knowledge_search`，普通提问和「搜一下」不会先查知识库；改成「主动检索」后，问题可能涉及知识库文档时会先检索。
 
 **部署方式：**
 
@@ -627,7 +628,7 @@ docker exec -it <容器名> bash
 - **体验**：预装插件的安装进度只在容器日志里，用户看不到；用户打开深层链接时如果 dsh 需要重新换 cookie，会回到 dsh 首页而不是原链接；
 - **规格**：加预热池降低冷启动时间；
 - **dsh 菜单注入**：账号入口依赖 dsh More 菜单的 DOM（触发按钮的 `data-signed-out`、菜单项 `role="menuitem"`、Sign in 的文字）。dsh 改版后若菜单里看不到账号设置和退出登录，需要调整 `web/public/dsh-cloud-overlay.js`；
-- **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.1-rc.2` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。
+- **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.2-alpha.2` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。
 
 ## 上线前必做：每个用户一块持久卷
 
