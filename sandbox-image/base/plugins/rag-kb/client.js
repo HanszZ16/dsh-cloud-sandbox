@@ -44,6 +44,8 @@ window.__ModuleLoader__.load({
         save: '保存', saving: '正在保存…', discard: '放弃更改', savedOk: '已保存，下次检索生效', noChanges: '没有更改', saveFailed: '保存失败：{error}',
         on: '开', off: '关',
         f_description: '知识库描述', h_description: 'Agent 检索前会读这段描述，知道库里有什么',
+        f_searchMode: '检索时机', h_searchMode: '默认「仅在要求时」：只有你说「在知识库里查…」时才检索；「主动检索」会在问题可能涉及知识库文档时先查知识库',
+        o_searchMode_explicit: '仅在要求时', o_searchMode_proactive: '主动检索',
         f_topK: '检索返回条数', h_topK: '默认 5',
         f_minScore: '相似度阈值', h_minScore: '0～1，默认 0.3；越低结果越多、噪音越多',
         f_enableReranker: 'Reranker 重排序', h_enableReranker: '首次使用会下载约 1 GB 的模型并占用更多内存',
@@ -64,6 +66,8 @@ window.__ModuleLoader__.load({
         save: 'Save', saving: 'Saving…', discard: 'Discard', savedOk: 'Saved; applies to the next search', noChanges: 'No changes', saveFailed: 'Could not save: {error}',
         on: 'On', off: 'Off',
         f_description: 'Description', h_description: 'The agent reads this before searching, to know what the knowledge base holds',
+        f_searchMode: 'When to search', h_searchMode: 'By default the agent searches only when you ask it to look in the knowledge base; Proactive also searches first when a question may concern its documents',
+        o_searchMode_explicit: 'Only when asked', o_searchMode_proactive: 'Proactive',
         f_topK: 'Results per search', h_topK: 'Default 5',
         f_minScore: 'Similarity threshold', h_minScore: '0–1, default 0.3; lower returns more results and more noise',
         f_enableReranker: 'Reranker', h_enableReranker: 'Downloads a model of about 1 GB at first use and needs more memory',
@@ -299,6 +303,7 @@ window.__ModuleLoader__.load({
     // ── Settings → Plugins → Knowledge base ──
     const FIELDS = [
       { key: 'description', type: 'string' },
+      { key: 'searchMode', type: 'choice', options: ['explicit', 'proactive'] },
       { key: 'topK', type: 'number' },
       { key: 'minScore', type: 'number' },
       { key: 'enableReranker', type: 'boolean' },
@@ -365,10 +370,10 @@ window.__ModuleLoader__.load({
         h('strong', null, T.settingsTitle),
         FIELDS.map(field => h('label', { key: field.key, style: { display: 'flex', flexDirection: 'column', gap: 4 } },
           h('span', null, t(`f_${field.key}`)),
-          field.type === 'boolean'
-            ? h('span', { style: { display: 'flex', gap: 12 } }, [true, false].map(value => h('label', { key: String(value), style: { display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' } },
-              h('input', { type: 'radio', name: field.key, checked: (shown[field.key] === true) === value, onChange: () => setDraft({ ...(draft ?? current), [field.key]: value }) }),
-              value ? T.on : T.off)))
+          field.type === 'boolean' || field.type === 'choice'
+            ? h('span', { style: { display: 'flex', gap: 12 } }, (field.options ?? [true, false]).map(value => h('label', { key: String(value), style: { display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' } },
+              h('input', { type: 'radio', name: field.key, checked: field.type === 'boolean' ? (shown[field.key] === true) === value : shown[field.key] === value, onChange: () => setDraft({ ...(draft ?? current), [field.key]: value }) }),
+              field.type === 'boolean' ? (value ? T.on : T.off) : t(`o_${field.key}_${value}`))))
             : h('input', { style: input, value: String(shown[field.key] ?? ''), inputMode: field.type === 'number' ? 'decimal' : undefined, onChange: (e) => setDraft({ ...(draft ?? current), [field.key]: e.target.value }) }),
           h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' } }, t(`h_${field.key}`)))),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },

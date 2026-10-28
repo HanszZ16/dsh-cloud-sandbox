@@ -1,6 +1,6 @@
 {
   "name": "dsh-cloud-rag-kb",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Knowledge base for dsh-cloud workspaces: upload and manage documents in a side panel; the agent answers from them through hybrid vector and keyword search with citations. Forked from @puwenhui/dsh-rag-kb 0.3.1.",
   "license": "MIT",
   "private": true,
@@ -25,7 +25,7 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-home-paths": "0.2.2-alpha.2",
     "@deepseek-ai/schemastery": "3.18.5",
     "@huggingface/transformers": "3.8.1",
     "mammoth": "1.13.0",

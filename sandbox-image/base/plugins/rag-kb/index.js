@@ -36,6 +36,7 @@ const MAX_NAME_BYTES = 200
 
 export const Config = z.object({
   description: z.string().default('').description('What the knowledge base holds; the agent reads it before searching.'),
+  searchMode: z.union(['explicit', 'proactive']).default('explicit').description('explicit: search only when the user asks to look in the knowledge base. proactive: also search first when a question may concern its documents.'),
   topK: z.number().step(1).min(1).max(50).default(5).description('Chunks returned per search.'),
   minScore: z.number().min(0).max(1).default(0.3).description('Lowest vector similarity a chunk needs to be returned.'),
   enableReranker: z.boolean().default(false).description('Rerank hits with a cross-encoder; downloads rerankerModel at first use.'),
@@ -383,7 +384,10 @@ export function apply(ctx, config = {}) {
     const disposers = [
       ctx.tools.register({
         name: 'knowledge_search',
-        description: '在本地知识库中混合检索（语义向量 + 关键词）。返回最相关的知识块，每条带 citation 引用标注。回答知识库相关问题时：先检索 → 组织回答 → 在答案中标注来源 citation。query 支持自然语言和精确关键词（错误码/型号/人名等）。',
+        description: (cfg.searchMode === 'explicit'
+          ? '在用户的本地知识库中混合检索（语义向量 + 关键词）。只在用户明确要求查知识库时调用（例如「在知识库里查…」「根据我的文档…」）；普通提问、「搜一下」「查一下」不要调用。'
+          : '在用户的本地知识库中混合检索（语义向量 + 关键词）。问题可能涉及知识库里的文档时先检索。')
+          + '返回最相关的知识块，每条带 citation 引用标注。query 支持自然语言和精确关键词（错误码/型号/人名等）。',
         parameters: params({
           query: { type: 'string', description: '检索问题（自然语言或精确关键词）' },
           top_k: { type: 'number', description: `返回条数（默认 ${cfg.topK}）` },
@@ -453,10 +457,12 @@ export function apply(ctx, config = {}) {
     interpolate: false,
     text: () => [
       'You have a local knowledge base accessible via these tools:',
-      '- knowledge_search: hybrid search (semantic + keyword). Use BEFORE answering questions about KB content.',
+      '- knowledge_search: hybrid search (semantic + keyword) over the user\'s documents',
       '- knowledge_status: list documents and config',
       '- knowledge_manage: save/add/remove/reindex documents',
-      'IMPORTANT: When the user says 搜一下/查一下/搜索, FIRST try knowledge_search on the local KB. Only do a web search if KB has no relevant results AND the topic is clearly not about local documents. Do NOT search both simultaneously — this confuses the answer.',
+      cfg.searchMode === 'explicit'
+        ? 'Call knowledge_search only when the user explicitly asks you to look in the knowledge base or their own saved documents (for example 在知识库里查…, 根据知识库…, 我的文档里…). For every other question, including requests such as 搜一下/查一下/搜索, do not call it: answer directly, or use web search when the question needs current or external information.'
+        : 'When a question may concern the documents in the knowledge base, call knowledge_search before answering. Use web search only when the knowledge base has no relevant results and the topic is clearly not about the user\'s documents. Do not search both at once.',
       cfg.description !== '' ? `KB description: ${cfg.description}` : '',
       `Currently ${store.listDocs().filter(d => d.status === 'ready').length} document(s) indexed.`,
       `Files in ${knowledgeDir} (where the user's uploads are saved) are indexed automatically; deleting one there removes it from the knowledge base.`,

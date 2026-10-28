@@ -19,5 +19,6 @@ Changes from upstream:
 - Dependencies are declared and pinned, including `@deepseek-ai/dsh-home-paths`.
 - `reindex` re-reads and re-embeds every document (upstream only marked them pending); `remove` deletes one exact match instead of every name containing the text; the `describe` action, which stored nothing, is gone.
 - Replacing a document's chunks also deletes their keyword-index rows.
+- `searchMode` (default `explicit`): the agent calls `knowledge_search` only when the user asks it to look in the knowledge base; `proactive` restores searching first whenever a question may concern its documents. Upstream told the agent to search the knowledge base first for every 搜一下/查一下 request.
 
 Bump `version` in `package.json` when changing this directory; provision re-links the plugin for users whose profile carries an older version.
