@@ -386,6 +386,33 @@
   publishTheme()
   new MutationObserver(publishTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-ds-theme-source'] })
 
+  // dsh shows Settings' "Open configuration file" only when the page's host is
+  // loopback, and it opens the file in a desktop editor on dsh's own machine:
+  // here that is the sandbox, which has none, so the button does nothing.
+  // Labels from dsh's ui-settings-general locales (verified with 0.2.2-alpha.2).
+  const OPEN_DOCUMENT_LABELS = new Set([
+    '打开配置文件', 'Open configuration file', '設定ファイルを開く', 'Abrir archivo de configuración',
+    'Ouvrir le fichier de configuration', 'Konfigurationsdatei öffnen', 'Открыть файл конфигурации',
+    'Abra o arquivo de configuração',
+  ])
+  if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname) || location.hostname.endsWith('.localhost')) {
+    let scheduled = false
+    const hideOpenDocument = () => {
+      scheduled = false
+      for (const button of document.querySelectorAll('[role="dialog"] button')) {
+        if (OPEN_DOCUMENT_LABELS.has(button.textContent.trim()) && button.parentElement) {
+          // The parent also holds the action's error text.
+          button.parentElement.style.display = 'none'
+        }
+      }
+    }
+    new MutationObserver(() => {
+      if (scheduled) return
+      scheduled = true
+      requestAnimationFrame(hideOpenDocument)
+    }).observe(document.documentElement, { childList: true, subtree: true })
+  }
+
   const mount = () => document.body.appendChild(host)
   if (document.body) mount()
   else document.addEventListener('DOMContentLoaded', mount)
