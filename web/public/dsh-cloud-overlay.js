@@ -370,6 +370,22 @@
     if (wasUpdating) watch()
   }, 1500)
 
+  // The account and admin pages follow the theme chosen in dsh: publish dsh's
+  // theme source (light, dark, or system) to this origin's storage, which those
+  // pages read, and again whenever the user changes it.
+  const THEME_KEY = 'dsh-cloud.theme'
+  const publishTheme = () => {
+    const source = document.documentElement.getAttribute('data-ds-theme-source')
+    if (source !== 'light' && source !== 'dark' && source !== 'system') return
+    try {
+      if (localStorage.getItem(THEME_KEY) !== source) localStorage.setItem(THEME_KEY, source)
+    } catch {
+      // Storage is unavailable (blocked site data); the pages fall back to the OS scheme.
+    }
+  }
+  publishTheme()
+  new MutationObserver(publishTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-ds-theme-source'] })
+
   const mount = () => document.body.appendChild(host)
   if (document.body) mount()
   else document.addEventListener('DOMContentLoaded', mount)
