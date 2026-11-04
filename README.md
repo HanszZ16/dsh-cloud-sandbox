@@ -168,7 +168,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.2-alpha.2`; dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1). The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
+To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.2-alpha.3`; dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1). The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
 
 The base image also carries the knowledge base plugin and its Chinese embedding model, which is downloaded from Hugging Face during the build. Where huggingface.co is unreachable, add `--build-arg HF_ENDPOINT=https://hf-mirror.com`; where the npm registry is unreliable, `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` applies to the plugins installed into the image.
 
@@ -666,7 +666,7 @@ docker exec -it <container> bash
 - **Experience**: installation progress of preinstalled plugins is only in container logs; opening a deep link when dsh needs a new cookie lands on dsh's home page instead of the link;
 - **Capacity**: add a warm pool to cut cold-start time;
 - **dsh menu injection**: the account entries depend on the DOM of dsh's More menu (the trigger's `data-signed-out`, items with `role="menuitem"`, the Sign in label). If a dsh update leaves the menu without account settings and sign-out, adjust `web/public/dsh-cloud-overlay.js`;
-- **dsh version**: verified with `@deepseek-ai/dsh@0.2.2-alpha.2`; dsh is still in preview, so after upgrading re-verify the reverse proxy, the launch-token flow, `--patch`, and `dsh plugin add`, and refresh the design tokens in `web/src/theme/`.
+- **dsh version**: verified with `@deepseek-ai/dsh@0.2.2-alpha.3`; dsh is still in preview, so after upgrading re-verify the reverse proxy, the launch-token flow, `--patch`, and `dsh plugin add`, and refresh the design tokens in `web/src/theme/`.
 
 ## Before launch: one persistent volume per user
 

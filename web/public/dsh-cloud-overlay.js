@@ -389,7 +389,7 @@
   // dsh shows Settings' "Open configuration file" only when the page's host is
   // loopback, and it opens the file in a desktop editor on dsh's own machine:
   // here that is the sandbox, which has none, so the button does nothing.
-  // Labels from dsh's ui-settings-general locales (verified with 0.2.2-alpha.2).
+  // Labels from dsh's ui-settings-general locales (verified with 0.2.2-alpha.3).
   const OPEN_DOCUMENT_LABELS = new Set([
     '打开配置文件', 'Open configuration file', '設定ファイルを開く', 'Abrir archivo de configuración',
     'Ouvrir le fichier de configuration', 'Konfigurationsdatei öffnen', 'Открыть файл конфигурации',

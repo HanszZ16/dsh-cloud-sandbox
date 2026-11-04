@@ -35,6 +35,6 @@ Environment and header values are never returned; command arguments, URLs, error
 
 ## Pre-stable dependencies
 
-The report reads dsh internals that may change between versions: loader entries (`ctx.loader.entries()`, `entry.options`, `entry.fiber.state`), `ctx.tools.definitions()`, `ctx.skills.list()`, `ctx.sessionPersistence.list()`, `ctx.agentPresets.acquireScope()`, `ctx.logger.exporter()`, the `settings.section` slot, and the MCP client's log label. A source that cannot be read is reported in the section as unavailable instead of failing it. Re-verify after upgrading dsh; verified with `@deepseek-ai/dsh@0.2.2-alpha.2`.
+The report reads dsh internals that may change between versions: loader entries (`ctx.loader.entries()`, `entry.options`, `entry.fiber.state`), `ctx.tools.definitions()`, `ctx.skills.list()`, `ctx.sessionPersistence.list()`, `ctx.agentPresets.acquireScope()`, `ctx.logger.exporter()`, the `settings.section` slot, and the MCP client's log label. A source that cannot be read is reported in the section as unavailable instead of failing it. Re-verify after upgrading dsh; verified with `@deepseek-ai/dsh@0.2.2-alpha.3`.
 
 Bump `version` in `package.json` when changing this directory; provision re-links the plugin for users whose profile carries an older version.

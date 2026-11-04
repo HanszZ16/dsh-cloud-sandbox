@@ -167,7 +167,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.2-alpha.2`；dsh 0.2.2 要求 Node.js 24.9 以上，镜像用的是 Node.js 24.22.1。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
+要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.2-alpha.3`；dsh 0.2.2 要求 Node.js 24.9 以上，镜像用的是 Node.js 24.22.1。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
 
 基础镜像还自带知识库插件和中文向量模型，模型在构建时从 Hugging Face 下载。访问不了 huggingface.co 时，加 `--build-arg HF_ENDPOINT=https://hf-mirror.com`；npm 官方源不稳定时，加 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com`（只用于装进镜像的插件）。
 
@@ -665,7 +665,7 @@ docker exec -it <容器名> bash
 - **体验**：预装插件的安装进度只在容器日志里，用户看不到；用户打开深层链接时如果 dsh 需要重新换 cookie，会回到 dsh 首页而不是原链接；
 - **规格**：加预热池降低冷启动时间；
 - **dsh 菜单注入**：账号入口依赖 dsh More 菜单的 DOM（触发按钮的 `data-signed-out`、菜单项 `role="menuitem"`、Sign in 的文字）。dsh 改版后若菜单里看不到账号设置和退出登录，需要调整 `web/public/dsh-cloud-overlay.js`；
-- **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.2-alpha.2` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。
+- **dsh 版本**：基于 `@deepseek-ai/dsh@0.2.2-alpha.3` 验证，dsh 仍处于预览阶段，升级版本后需要重新验证反向代理、启动令牌流程、`--patch` 和 `dsh plugin add` 的行为；升级时同步更新 `web/src/theme/` 里的设计变量。
 
 ## 上线前必做：每个用户一块持久卷
 

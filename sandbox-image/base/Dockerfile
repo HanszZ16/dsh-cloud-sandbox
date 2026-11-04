@@ -4,7 +4,7 @@
 ARG NODE_IMAGE=node:24.22.1-bookworm-slim
 FROM ${NODE_IMAGE}
 
-ARG DSH_VERSION=0.2.2-alpha.2
+ARG DSH_VERSION=0.2.2-alpha.3
 # dsh's plugin manager runs pnpm in the profile directory; without it neither
 # the Web Plugins page nor gateway-assigned default plugins can install.
 ARG PNPM_VERSION=11.28.5

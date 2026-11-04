@@ -250,7 +250,7 @@ function PluginEditor({
         </Field>
         {kind === 'bundle' ? (
           <Field label="插件包 spec" wide hint="pnpm add 接受的写法：npm 包名@版本、git 地址或 tarball URL。工作空间需要能访问对应的源。">
-            <input className="input mono" value={spec} placeholder="@deepseek-ai/dsh-subagent-codex@0.2.2-alpha.2" onChange={(e) => setSpec(e.target.value)} />
+            <input className="input mono" value={spec} placeholder="@deepseek-ai/dsh-subagent-codex@0.2.2-alpha.3" onChange={(e) => setSpec(e.target.value)} />
           </Field>
         ) : null}
         {kind === 'patch' ? (

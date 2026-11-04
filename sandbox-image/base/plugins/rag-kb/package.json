@@ -25,7 +25,7 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/dsh-home-paths": "0.2.2-alpha.2",
+    "@deepseek-ai/dsh-home-paths": "0.2.2-alpha.3",
     "@deepseek-ai/schemastery": "3.18.5",
     "@huggingface/transformers": "3.8.1",
     "mammoth": "1.13.0",
