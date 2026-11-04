@@ -26,11 +26,12 @@
  *   starts Chromium nor receives frames. dsh pages keep one open to bring the
  *   live view forward when the agent starts operating the browser.
  */
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { timingSafeEqual } from 'node:crypto'
 import { rmSync } from 'node:fs'
 import http from 'node:http'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { WebSocket, WebSocketServer } from 'ws'
 
 const HUB_HOST = process.env.HUB_HOST ?? '127.0.0.1'
@@ -47,6 +48,7 @@ const HEIGHT = 800
 const AGENT_IDLE_MS = 3000
 
 const log = (...args) => console.log('dsh-cloud browser:', ...args)
+const execFileAsync = promisify(execFile)
 
 // Chromium lifecycle
 
@@ -67,14 +69,31 @@ function ensureChrome() {
   return starting
 }
 
+/** Desktop Chrome's reduced User-Agent for the installed Chromium's major version. */
+async function desktopUserAgent() {
+  let major = '0'
+  try {
+    // "Chromium 156.0.8078.79 built on Debian GNU/Linux 12 (bookworm)"
+    const { stdout } = await execFileAsync(CHROMIUM, ['--version'])
+    major = /(\d+)\./.exec(stdout)?.[1] ?? major
+  } catch (err) {
+    log(`cannot read the Chromium version: ${err.message}`)
+  }
+  return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+}
+
 async function launch() {
   // A profile saved from a stopped container still holds the old host's locks.
   for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
     rmSync(join(PROFILE_DIR, name), { force: true })
   }
+  const userAgent = await desktopUserAgent()
   log('starting Chromium')
   const child = spawn(CHROMIUM, [
     '--headless=new',
+    // Headless Chromium names itself HeadlessChrome, which sites such as Baidu
+    // answer with a captcha; present the desktop Chrome string instead.
+    `--user-agent=${userAgent}`,
     `--remote-debugging-port=${CDP_PORT}`,
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${PROFILE_DIR}`,
