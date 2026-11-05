@@ -69,15 +69,19 @@ COPY plugins/rag-kb /usr/local/lib/dsh-cloud/plugins/rag-kb
 COPY plugins/workspace-upload /usr/local/lib/dsh-cloud/plugins/workspace-upload
 # Settings → MCP & skills; no dependencies, provisioned like workspace-upload.
 COPY plugins/workspace-capabilities /usr/local/lib/dsh-cloud/plugins/workspace-capabilities
+COPY plugins/workspace-rooms /usr/local/lib/dsh-cloud/plugins/workspace-rooms
 COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
 # The workspace browser dsh bundle (live-view tab + the Playwright MCP row),
 # provisioned with the spec file:/usr/local/lib/dsh-cloud/workspace-browser;
-# the gateway registers it, rag-kb, workspace-upload, and workspace-capabilities
-# as built-in plugins.
+# the gateway registers the image's workspace plugins in its catalog.
 COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
 COPY defaults.cordis.yml /usr/local/lib/dsh-cloud/defaults.cordis.yml
 COPY provision.py /usr/local/lib/dsh-cloud/provision.py
+# Room UI is compiled into the installed DSH frontend, not loaded as a
+# workspace-rooms client plugin. Check the upstream bytes before patching.
+COPY dsh-native /usr/local/lib/dsh-cloud/dsh-native
+RUN node /usr/local/lib/dsh-cloud/dsh-native/apply.mjs "$(npm root -g)/@deepseek-ai/dsh"
 # The pnpm content store lives outside /home/agent: installed plugins are
 # persisted through their node_modules copies, not through the cache.
 # Chromium cannot create its own process sandbox inside a container; the

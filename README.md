@@ -11,7 +11,7 @@ Gives every account its own **workspace**: an isolated sandbox running a complet
 - **Admin console**: manage users and groups; assign default plugins, MCP servers, and config patches per group or per user; set resources, allowed models, and daily quotas; view usage and the audit log.
 - **Model keys**: the team's shared key and users' own keys stay on the gateway (user keys encrypted at rest) and never enter a sandbox.
 
-dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm. The sign-in page, loading page, account settings, and admin console are written in React and reuse dsh Web's design tokens (colors, radii, fonts, dark mode), so they look like dsh.
+Sandboxes use the official npm release of `@deepseek-ai/dsh` as their base. The image build patches the pinned native Chat, Conversation, Sidebar, Workspace, and Right Sidebar modules so private and group chats can share DSH's chat components and both sidebars. The gateway serves sign-in, loading, account settings, and admin pages using dsh Web's design tokens.
 
 > Status: proof of concept. The Docker backend is verified end to end (sign-in, loading page, account settings, admin console, plugin and MCP provisioning, conversations, save on sign-out, sleep and resume, restart, orphan recovery). The OpenSandbox backend (experimental) is verified end to end on OpenSandbox's Docker runtime. The E2B backend is implemented but **not verified with a real key**.
 
@@ -27,6 +27,8 @@ dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm
 - [Workspace browser: watch and take over the agent's browser](#workspace-browser-watch-and-take-over-the-agents-browser)
 - [Knowledge base (RAG)](#knowledge-base-rag)
 - [Uploading files into a workspace](#uploading-files-into-a-workspace)
+- [Multi-agent collaboration](#multi-agent-collaboration)
+- [Collaboration rooms and bots](#collaboration-rooms-and-bots)
 - [MCP and skills page](#mcp-and-skills-page)
 - [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
 - [Where user data lives](#where-user-data-lives)
@@ -168,7 +170,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.2-alpha.3`; dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1). The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
+The image pins dsh `0.2.2-alpha.3`. Update and test the native frontend patch in `sandbox-image/base/dsh-native` when upgrading dsh; the build refuses a mismatched release. Dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1. The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
 
 The base image also carries the knowledge base plugin and its Chinese embedding model, which is downloaded from Hugging Face during the build. Where huggingface.co is unreachable, add `--build-arg HF_ENDPOINT=https://hf-mirror.com`; where the npm registry is unreliable, `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` applies to the plugins installed into the image.
 
@@ -364,6 +366,18 @@ The plugin is `sandbox-image/base/plugins/workspace-upload`, a built-in plugin l
 - dsh's web server ends a request after 5 minutes (Node.js's default `requestTimeout`), so one file must arrive within that time: about 0.7 MB/s for a 200 MB file.
 - No total quota yet. Until per-user volumes arrive, every uploaded byte is part of the snapshot taken when the workspace sleeps, so large files make sleep and resume slower.
 - A user whose project is `/home/agent` itself (one registered before projects moved to `~/workspaces`) uploads into the home directory.
+
+## Multi-agent collaboration
+
+The base image pins dsh `0.2.2-alpha.3`, which includes the experimental **Agent Teams** plugin. In your workspace, open **Settings → Plugins**, enable **Agent Teams**, refresh, and start a new chat. The lead can delegate to teammates, message them, and track shared tasks. The team panel shows their progress and opens individual teammate chats.
+
+See the [setup and sample task](docs/agent-teams.zh.md) (Chinese) for a pilot and its limits.
+
+## Collaboration rooms and bots
+
+Open **Conversations** in DSH's sidebar to switch between bot direct chats and group chats. Use **+** to create a bot with an avatar or select bots for a new group. Send a message directly in a private chat; in a group, use `@researcher` to ask one bot or `@all` to ask every member in parallel. Each conversation keeps its own context and can be deleted from its row menu. Use **View execution session** in the conversation settings for native tool approvals and run details.
+
+To upgrade an existing installation, rebuild its sandbox image, restart the gateway, then restart the target workspaces. The gateway assigns the bundled plugin to the default group; administrators can assign it to other groups. See the [plugin guide](sandbox-image/base/plugins/workspace-rooms/README.md) for a sample workflow and limits.
 
 ## MCP and skills page
 

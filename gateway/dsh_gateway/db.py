@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS groups (
@@ -103,6 +103,7 @@ ALTER TABLE groups ADD COLUMN image_id INTEGER REFERENCES images(id);
     3: "",
     4: "",
     5: "",
+    6: "",
 }
 
 # Plugins shipped in the sandbox image. Every catalog gets each one once, when
@@ -141,6 +142,14 @@ BUILTIN_PLUGINS = (
         "description": "设置里的「MCP 与技能」页：查看工作空间的 MCP 服务器是否在线、有哪些工具和最近日志，以及有哪些技能",
         "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/workspace-capabilities"},
         "since": 5,
+    },
+    {
+        "key": "workspace-rooms",
+        "kind": "bundle",
+        "name": "协作房间",
+        "description": "在工作空间创建房间和具名机器人，点名委派并在同一时间线查看回复",
+        "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/workspace-rooms"},
+        "since": 6,
     },
 )
 

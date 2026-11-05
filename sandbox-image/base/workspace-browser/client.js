@@ -383,8 +383,9 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab.title', key: ID, locale: NS,
       }, WorkspaceBrowserTitle)), 'dsh-cloud-workspace-browser: title')
-      ctx.effect(() => watchAgent(() => {
+      ctx.effect(() => watchAgent((active) => {
         try {
+          if (ctx.sidebarRight.followRoomBrowser?.(KIND, active) || !active) return
           // Opens the tab in the current session, or brings an open one forward.
           ctx.sidebarRight.openTab(KIND)
         } catch (err) {
@@ -394,8 +395,8 @@ window.__ModuleLoader__.load({
       }), 'dsh-cloud-workspace-browser: follow agent')
     }
 
-    /** Call `onStart` each time the agent starts operating the browser; returns the disposer. */
-    function watchAgent(onStart) {
+    /** Report transitions in agent browser activity; returns the disposer. */
+    function watchAgent(onActivity) {
       let stopped = false
       let socket = null
       let timer = 0
@@ -409,11 +410,13 @@ window.__ModuleLoader__.load({
         socket.onmessage = (event) => {
           const message = JSON.parse(event.data)
           if (message.type !== 'agent') return
-          if (message.active && !active) onStart()
-          active = Boolean(message.active)
+          const next = Boolean(message.active)
+          if (next !== active) onActivity(next)
+          active = next
         }
         socket.onclose = (event) => {
           if (stopped) return
+          if (active) onActivity(false)
           active = false
           // Without a browser hub (or a valid session), check back rarely.
           const delay = event.code === NO_BROWSER || event.code === NOT_SIGNED_IN ? 60000 : 1000 * 2 ** Math.min(++retry, 5)

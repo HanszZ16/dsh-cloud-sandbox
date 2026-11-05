@@ -190,6 +190,11 @@ def install_bundle(key: str, spec: str) -> bool:
         if refreshed is not None:
             return refreshed
     if spec.startswith("link:"):
+        # A gateway can be newer than a group's image. Leave the existing
+        # profile intact and retry when the bundle is present on the next boot.
+        if not (Path(spec[len("link:"):]) / "package.json").is_file():
+            log(f"{spec} is not in this image; skipping {key}")
+            return False
         if not unlink_renamed(spec):
             return False
         if is_linked(spec):
