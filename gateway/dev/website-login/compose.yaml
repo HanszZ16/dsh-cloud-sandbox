@@ -1,0 +1,19 @@
+name: dsh-website-login-local
+
+services:
+  proxy:
+    image: caddy:2-alpine
+    environment:
+      DSH_WEBSITE_LOGIN_GATEWAY_PORT: ${DSH_WEBSITE_LOGIN_GATEWAY_PORT:-8000}
+    labels:
+      dev.orbstack.domains: dsh-signin-web.local@80,dsh-signin-vault.local@80
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+  fixture:
+    image: python:3.13-alpine
+    labels:
+      dev.orbstack.domains: dsh-signin-fixture.local@8080
+    command: ["python", "-B", "/fixture.py"]
+    volumes:
+      - ./fixture.py:/fixture.py:ro

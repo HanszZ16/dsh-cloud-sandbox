@@ -46,10 +46,10 @@ def token_hash(token: str) -> str:
 
 
 class SecretBox:
-    """Encrypts users' API keys at rest with a key derived from GATEWAY_SECRET_KEY."""
+    """Encrypts stored credentials with a key derived for one purpose."""
 
-    def __init__(self, secret_key: str) -> None:
-        derived = hashlib.sha256(b"dsh-gateway-api-keys:" + secret_key.encode()).digest()
+    def __init__(self, secret_key: str, purpose: bytes = b"dsh-gateway-api-keys:") -> None:
+        derived = hashlib.sha256(purpose + secret_key.encode()).digest()
         self._fernet = Fernet(base64.urlsafe_b64encode(derived))
 
     def encrypt(self, value: str) -> str:

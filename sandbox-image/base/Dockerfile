@@ -69,6 +69,7 @@ COPY plugins/rag-kb /usr/local/lib/dsh-cloud/plugins/rag-kb
 COPY plugins/workspace-upload /usr/local/lib/dsh-cloud/plugins/workspace-upload
 # Settings → MCP & skills; no dependencies, provisioned like workspace-upload.
 COPY plugins/workspace-capabilities /usr/local/lib/dsh-cloud/plugins/workspace-capabilities
+COPY plugins/website-login /usr/local/lib/dsh-cloud/plugins/website-login
 COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
 # The workspace browser dsh bundle (live-view tab + the Playwright MCP row),
 # provisioned with the spec file:/usr/local/lib/dsh-cloud/workspace-browser;
@@ -113,3 +114,12 @@ ARG NODE_IMAGE
 LABEL dsh-cloud.contract="1" \
       dsh-cloud.dsh-version="${DSH_VERSION}" \
       dsh-cloud.runtime="${NODE_IMAGE}"
+
+# Keep the official npm release; apply our small, version-checked UI changes
+# last so editing them does not rebuild the software and model layers above.
+USER root
+COPY customize_ui.py /usr/local/lib/dsh-cloud/customize_ui.py
+RUN python3 /usr/local/lib/dsh-cloud/customize_ui.py \
+ && node --check /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js \
+ && node --check /usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js
+USER agent

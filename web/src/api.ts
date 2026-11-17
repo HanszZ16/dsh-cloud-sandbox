@@ -36,6 +36,7 @@ export interface Me extends UserInfo {
   shared_key_available: boolean
   quota: { daily_request_limit: number; requests_today: number }
   plugins: { name: string; kind: PluginKind; description: string }[]
+  website_login?: { status: 'available' | 'unassigned' | 'disabled'; vault_url: string | null }
   sandbox: SandboxInfo
   /** Whether the workspace has been used before (a saved snapshot exists). */
   workspace_saved: boolean

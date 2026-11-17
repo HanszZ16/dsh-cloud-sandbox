@@ -1,0 +1,11 @@
+{
+  "intranet": {
+    "origin": "https://intranet.example.com",
+    "login_path": "/login",
+    "username_selector": "input[name=username]",
+    "password_selector": "input[name=password]",
+    "submit_selector": "button[type=submit]",
+    "success_path": "/dashboard",
+    "cookies": ["__Host-session"]
+  }
+}

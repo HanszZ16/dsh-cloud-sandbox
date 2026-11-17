@@ -1,0 +1,11 @@
+{
+  "demo": {
+    "origin": "https://dsh-signin-fixture.local",
+    "login_path": "/login",
+    "username_selector": "#username",
+    "password_selector": "#password",
+    "submit_selector": "#submit",
+    "success_path": "/dashboard",
+    "cookies": ["__Host-dsh-demo"]
+  }
+}

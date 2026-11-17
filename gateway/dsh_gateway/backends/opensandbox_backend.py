@@ -49,7 +49,6 @@ from .base import Progress, SandboxBackend, SandboxHandle, SandboxSpec, no_progr
 
 log = logging.getLogger("dsh_gateway.backends.opensandbox")
 
-_LAUNCH_LINE = re.compile(r"dsh web: (https?://\S+\?token=\S+)")
 _DSH_PORT = 8080
 _HUB_PORT = 3081
 _TOKEN_HEADER = "X-EXECD-ACCESS-TOKEN"
@@ -260,7 +259,7 @@ class OpenSandboxBackend(SandboxBackend):
     async def _wait_listening(self, sbx) -> None:
         deadline = time.monotonic() + self._start_timeout_s
         while time.monotonic() < deadline:
-            if _LAUNCH_LINE.search(await _read_text(sbx, f"{_RUN}/web.log")):
+            if await _read_launch_url(sbx):
                 return
             code = (await _read_text(sbx, f"{_RUN}/exit")).strip()
             if code:
@@ -288,10 +287,10 @@ class OpenSandboxBackend(SandboxBackend):
 
     async def launch_url(self, handle: SandboxHandle) -> str:
         machine = await self._machine(handle.sandbox_id)
-        matches = _LAUNCH_LINE.findall(await _read_text(machine.sandbox, f"{_RUN}/web.log"))
-        if not matches:
+        url = await _read_launch_url(machine.sandbox)
+        if not url:
             raise RuntimeError("dsh has not printed its launch URL")
-        return matches[-1]
+        return url
 
     async def capture(self, handle: SandboxHandle, progress: Progress = no_progress) -> dict[str, bytes]:
         sbx = (await self._machine(handle.sandbox_id)).sandbox
@@ -388,3 +387,9 @@ async def _run(sbx, command: str) -> str:
 async def _read_text(sbx, path: str) -> str:
     """A small text file in the sandbox, or "" when it does not exist yet."""
     return await _run(sbx, f"cat {path} 2>/dev/null || true")
+
+
+async def _read_launch_url(sbx, path: str = f"{_RUN}/web.log") -> str:
+    """Select the last launch line in the sandbox before execd flattens stdout lines."""
+    command = r'''awk '$1 == "dsh" && $2 == "web:" && $3 ~ /^https?:\/\// && $3 ~ /[?]token=/ { url = $3 } END { if (url != "") print url }' '''
+    return (await _run(sbx, f"{command}{shlex.quote(path)} 2>/dev/null || true")).strip()

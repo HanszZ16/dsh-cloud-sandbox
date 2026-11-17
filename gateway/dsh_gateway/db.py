@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS groups (
@@ -103,11 +103,21 @@ ALTER TABLE groups ADD COLUMN image_id INTEGER REFERENCES images(id);
     3: "",
     4: "",
     5: "",
+    6: """
+CREATE TABLE website_credentials (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  origin TEXT NOT NULL,
+  username TEXT NOT NULL,
+  ciphertext TEXT NOT NULL,
+  UNIQUE (user_id, origin, username)
+);
+""",
 }
 
 # Plugins shipped in the sandbox image. Every catalog gets each one once, when
 # it is created or upgraded to the schema version that introduced it
-# ("since"), assigned to the default group; afterwards they are ordinary
+# ("since"). Plugins assigned by default go to the default group. They are ordinary
 # catalog rows that admins may edit, unassign, or delete.
 BUILTIN_PLUGINS = (
     {
@@ -141,6 +151,15 @@ BUILTIN_PLUGINS = (
         "description": "设置里的「MCP 与技能」页：查看工作空间的 MCP 服务器是否在线、有哪些工具和最近日志，以及有哪些技能",
         "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/workspace-capabilities"},
         "since": 5,
+    },
+    {
+        "key": "website-login",
+        "kind": "bundle",
+        "name": "安全登录",
+        "description": "通过独立页面登录已配置的网站，经用户确认后让 Agent 使用登录会话",
+        "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/website-login"},
+        "since": 6,
+        "assign_default": False,
     },
 )
 
@@ -211,7 +230,9 @@ class Database:
                 f"INSERT OR IGNORE INTO plugins ({', '.join(stored)}) VALUES ({', '.join('?' for _ in stored)})",
                 tuple(stored.values()),
             )
-        keys = tuple(p["key"] for p in introduced)
+        keys = tuple(p["key"] for p in introduced if p.get("assign_default", True))
+        if not keys:
+            return
         self._conn.execute(
             "INSERT INTO group_plugins SELECT g.id, p.id FROM plugins p, (SELECT MIN(id) AS id FROM groups) g "
             f"WHERE g.id IS NOT NULL AND p.key IN ({', '.join('?' for _ in keys)}) "
@@ -253,7 +274,7 @@ class Database:
         if row is not None:
             return row["id"]
         group_id = self.create_group({"name": "default", "description": "默认用户组", **values})
-        keys = tuple(p["key"] for p in BUILTIN_PLUGINS)
+        keys = tuple(p["key"] for p in BUILTIN_PLUGINS if p.get("assign_default", True))
         builtins = self._all(f"SELECT id FROM plugins WHERE key IN ({', '.join('?' for _ in keys)})", keys)
         self.set_group_plugins(group_id, [r["id"] for r in builtins])
         return group_id
@@ -262,6 +283,33 @@ class Database:
         row = self._one("SELECT id FROM groups ORDER BY id LIMIT 1")
         assert row is not None, "ensure_default_group runs at startup"
         return row["id"]
+
+    def website_credentials(self, user_id: int) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._all(
+            "SELECT id, origin, username FROM website_credentials WHERE user_id = ? ORDER BY origin, username",
+            (user_id,),
+        )]
+
+    def website_credential(self, user_id: int, credential_id: int, origin: str) -> dict[str, Any] | None:
+        row = self._one(
+            "SELECT username, ciphertext FROM website_credentials WHERE user_id = ? AND id = ? AND origin = ?",
+            (user_id, credential_id, origin),
+        )
+        return dict(row) if row else None
+
+    def save_website_credential(self, user_id: int, origin: str, username: str, ciphertext: str) -> None:
+        self._run(
+            "INSERT INTO website_credentials (user_id, origin, username, ciphertext) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, origin, username) DO UPDATE SET ciphertext = excluded.ciphertext",
+            (user_id, origin, username, ciphertext),
+        )
+
+    def delete_website_credential(self, user_id: int, credential_id: int) -> None:
+        self._run("DELETE FROM website_credentials WHERE user_id = ? AND id = ?", (user_id, credential_id))
+
+    def replace_website_credential(self, user_id: int, credential_id: int, ciphertext: str) -> None:
+        self._run("UPDATE website_credentials SET ciphertext = ? WHERE user_id = ? AND id = ?",
+                  (ciphertext, user_id, credential_id))
 
     def list_groups(self) -> list[dict[str, Any]]:
         rows = self._all(

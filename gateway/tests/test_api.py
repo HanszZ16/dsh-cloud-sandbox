@@ -252,10 +252,10 @@ def test_version_1_database_is_migrated(tmp_path):
     (group,) = db.list_groups()
     assert group["name"] == "default" and group["image_id"] is None
     assert db.list_images() == []
-    assert sorted(p["key"] for p in db.list_plugins()) == ["rag-kb", "workspace-browser", "workspace-capabilities", "workspace-upload"]
+    assert sorted(p["key"] for p in db.list_plugins()) == ["rag-kb", "website-login", "workspace-browser", "workspace-capabilities", "workspace-upload"]
     assert len(group["plugin_ids"]) == 4
     db.close()
-    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 5
+    assert sqlite3.connect(path).execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_built_in_plugins_are_registered_once_and_keep_admin_edits(tmp_path):
@@ -289,7 +289,7 @@ def test_built_in_plugins_are_registered_once_and_keep_admin_edits(tmp_path):
 
     db.delete_plugin(plugins["workspace-browser"]["id"])
     db.close()
-    assert [p["key"] for p in Database(path).list_plugins()] == ["rag-kb", "workspace-upload", "workspace-capabilities"]
+    assert [p["key"] for p in Database(path).list_plugins()] == ["rag-kb", "workspace-upload", "workspace-capabilities", "website-login"]
 
 
 def test_an_upgrade_adds_only_the_built_in_plugins_its_version_introduced(tmp_path):
@@ -302,6 +302,8 @@ def test_an_upgrade_adds_only_the_built_in_plugins_its_version_introduced(tmp_pa
     # An admin took the knowledge base away from everyone and deleted the upload plugin, on schema 3.
     db.set_group_plugins(group_id, [plugins["workspace-browser"]])
     db.delete_plugin(plugins["workspace-upload"])
+    db.delete_plugin(plugins["website-login"])
+    db._conn.execute("DROP TABLE website_credentials")
     db._conn.execute("PRAGMA user_version=3")
     db.close()
 

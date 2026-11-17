@@ -11,7 +11,7 @@ Gives every account its own **workspace**: an isolated sandbox running a complet
 - **Admin console**: manage users and groups; assign default plugins, MCP servers, and config patches per group or per user; set resources, allowed models, and daily quotas; view usage and the audit log.
 - **Model keys**: the team's shared key and users' own keys stay on the gateway (user keys encrypted at rest) and never enter a sandbox.
 
-dsh itself is unmodified: sandboxes run the official `@deepseek-ai/dsh` from npm. The sign-in page, loading page, account settings, and admin console are written in React and reuse dsh Web's design tokens (colors, radii, fonts, dark mode), so they look like dsh.
+Sandboxes run the official `@deepseek-ai/dsh` from npm with a small, version-checked client UI customization applied when the image builds: Ungrouped becomes a separate “Don't work in a project” section, and new conversations can explicitly choose it. Session creation still uses dsh's existing APIs. The sign-in page, loading page, account settings, and admin console are written in React and reuse dsh Web's design tokens (colors, radii, fonts, dark mode), so they look like dsh.
 
 > Status: proof of concept. The Docker backend is verified end to end (sign-in, loading page, account settings, admin console, plugin and MCP provisioning, conversations, save on sign-out, sleep and resume, restart, orphan recovery). The OpenSandbox backend (experimental) is verified end to end on OpenSandbox's Docker runtime. The E2B backend is implemented but **not verified with a real key**.
 
@@ -168,7 +168,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.2-alpha.3`; dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1). The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
+To use another dsh version, add `--build-arg DSH_VERSION=<version>` (default `0.2.2-alpha.3`) and review the UI customizations in `sandbox-image/base/customize_ui.py`; the build rejects an unsupported release or changed code. dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1. The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
 
 The base image also carries the knowledge base plugin and its Chinese embedding model, which is downloaded from Hugging Face during the build. Where huggingface.co is unreachable, add `--build-arg HF_ENDPOINT=https://hf-mirror.com`; where the npm registry is unreliable, `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` applies to the plugins installed into the image.
 
@@ -233,6 +233,8 @@ The user-facing UI never mentions sandboxes, containers, starting, or releasing:
 | `/` (loading page) | Where sign-in lands: wakes the workspace with a thin progress bar ("preparing your workspace" / "restoring your workspace") and enters dsh when ready. If it cannot open, it shows only "your workspace can't be opened right now" and a retry button; the raw error is shown to administrators only |
 | **More** menu at the bottom of dsh's left sidebar | The gateway adds to dsh's own menu: the signed-in user at the top, **Account settings** (a panel over the current page, without leaving the workspace), **Admin console** (administrators only), and **Sign out** at the bottom. dsh's own Sign in item is relabelled **DeepSeek Sign in** (signing in to a DeepSeek account, distinct from the workspace account) |
 | Account settings (`/account`) | API key, today's usage, plugins preinstalled by the team, password |
+| Don't work in a project | Available in the new conversation's workspace picker; the conversation has no project membership. Its composer hides the workspace permission picker and keeps model selection |
+| Conversation menu → Remove conversation | Removes the row through dsh's existing archive mechanism, including blank New Sessions. Undo immediately or unarchive from All conversations (show archived); drafts are preserved |
 | Sign out | Saves the workspace (with progress), signs out, and returns to the sign-in page |
 | Workspace goes to sleep while the page is open | The page is covered by "your workspace is asleep; your files, conversations, and settings are saved", with a **Resume workspace** button that returns to the loading page. The page checks every 10 seconds and when the tab becomes visible |
 | Admin restarts the workspace while the page is open | Usually done in seconds; dsh reconnects by itself without a reload (dsh's signing key lives in the user's home, so the old cookie stays valid after a restart). If a check lands mid-restart, the page shows "updating your workspace" and comes back automatically |
@@ -311,6 +313,10 @@ dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName br
 - You and the agent can act at the same time; the panel only signals "Agent is operating" and does not block the agent.
 - The right-sidebar plugin is written directly in dsh's client module format (`workspace-browser/client.js`) and uses dsh's pre-stable right-sidebar contract (`sidebarRightTabs`, the `sidebar.right.pane.tab` slot); re-verify after upgrading dsh.
 - dsh's built-in `ui-sidebar-browser` (the right-sidebar Browser) is something else: it opens pages in an iframe in the user's own browser, is unrelated to the agent, and `localhost` there means the user's own computer. It can be enabled separately with the config patch `- id: ui-sidebar-browser` / `disabled: false`, for reading pages beside the conversation.
+
+## Secure website sign-in and password vault
+
+The optional Secure Sign-in plugin lets the agent request a login for a public HTTPS sign-in page without prior site configuration. The inline form receives passwords on a separate HTTPS origin. Manage saved logins in DSH Settings → Vault. See the [setup and supported login flows](docs/website-login.md).
 
 ## Knowledge base (RAG)
 

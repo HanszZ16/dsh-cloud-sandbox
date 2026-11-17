@@ -33,6 +33,7 @@ from .manager import SandboxManager, SandboxRecord
 from .proxy import forward_http, forward_websocket, relay_websocket, upstream_json
 from .store import LocalStateStore
 from .usage import UsageMeter
+from .website_login import install_website_login
 
 log = logging.getLogger("dsh_gateway")
 _LLM_DROP = {"host", "content-length", "connection", "authorization", "x-api-key", "cookie", "transfer-encoding"}
@@ -74,6 +75,7 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.include_router(api_router)
+    install_website_login(app, settings)
 
     def gw_of(conn) -> Gateway:
         return conn.app.state.gw

@@ -1,0 +1,8 @@
+{
+	admin off
+	auto_https off
+}
+
+http://dsh-signin-web.local, http://dsh-signin-vault.local {
+	reverse_proxy host.docker.internal:{$DSH_WEBSITE_LOGIN_GATEWAY_PORT}
+}

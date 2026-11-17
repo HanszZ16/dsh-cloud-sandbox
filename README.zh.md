@@ -11,7 +11,7 @@
 - **管理后台**：管理用户和用户组，按组或按人分配默认插件、MCP 服务和配置补丁，设置资源规格、模型权限、每日配额，查看用量和审计日志。
 - **模型 Key**：团队共享 key 和用户自己的 key 都只保存在网关（用户 key 加密存储），永远不进入沙箱。
 
-dsh 本身不做任何修改，沙箱里运行的是 npm 上的官方 `@deepseek-ai/dsh`。登录页、加载页、账号设置和管理后台用 React 编写，直接复用 dsh Web 的设计变量（颜色、圆角、字体、深色模式），和 dsh 界面风格一致。
+沙箱里运行 npm 上的官方 `@deepseek-ai/dsh`，构建镜像时仅对客户端界面应用有版本检查的少量定制：将“未分组”显示为独立的“非工作区”栏目，并允许新对话选择不归属任何项目。会话创建仍使用 dsh 原有接口。登录页、加载页、账号设置和管理后台用 React 编写，直接复用 dsh Web 的设计变量（颜色、圆角、字体、深色模式），和 dsh 界面风格一致。
 
 > 状态：PoC。Docker 后端已端到端验证（登录、加载页、账号设置、管理后台、插件和 MCP 下发、对话、退出保存、休眠与恢复、重启、孤儿回收）；OpenSandbox 后端（试验）已在 OpenSandbox 的 Docker 运行时上端到端验证；E2B 后端已实现但**未用真实 key 验证**。
 
@@ -167,7 +167,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.2-alpha.3`；dsh 0.2.2 要求 Node.js 24.9 以上，镜像用的是 Node.js 24.22.1。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
+要换 dsh 版本，加 `--build-arg DSH_VERSION=<版本号>`，默认 `0.2.2-alpha.3`；升级时需同时核对 `sandbox-image/base/customize_ui.py` 中的界面定制，新版本或代码不匹配时构建会报错。dsh 0.2.2 要求 Node.js 24.9 以上，镜像用的是 Node.js 24.22.1。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
 
 基础镜像还自带知识库插件和中文向量模型，模型在构建时从 Hugging Face 下载。访问不了 huggingface.co 时，加 `--build-arg HF_ENDPOINT=https://hf-mirror.com`；npm 官方源不稳定时，加 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com`（只用于装进镜像的插件）。
 
@@ -232,6 +232,8 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 | `/`（加载页） | 登录后自动到这里：唤醒工作空间，显示一条细进度条（"正在准备你的工作空间" / "正在恢复你的工作空间"），就绪后自动进入 dsh。打不开时只显示"工作空间暂时无法打开"和重试按钮，原始错误只给管理员看 |
 | dsh 左侧栏底部的 **More** 菜单 | 网关在 dsh 自己的菜单里加入：顶部显示当前用户，**账号设置**（在当前页面弹出面板，不离开工作空间）、**管理后台**（仅管理员），底部是**退出登录**。dsh 原有的 Sign in 改名为 **DeepSeek Sign in**（登录 DeepSeek 账号，和工作空间账号区分开） |
 | 账号设置（`/account`） | API Key、今日用量、团队预装的插件、修改密码 |
+| 非工作区 | 新对话的工作区选择器可选择“非工作区”；对话不归属项目，输入栏不显示“工作区内修改”，仍可选择模型 |
+| 对话菜单 → 移除对话 | 使用 dsh 原有归档机制从当前列表移除，包括空白“新会话”。可立即撤销，或在“全部对话（显示已归档）”中取消归档；草稿会保留 |
 | 退出登录 | 先保存工作空间（带进度），再退出，回到登录页 |
 | 页面开着时工作空间休眠了 | 页面盖上"工作空间已休眠，你的文件、对话和设置都已保存"，点**恢复工作空间**回到加载页。页面每 10 秒检查一次，切回标签页时也会检查 |
 | 页面开着时工作空间被管理员重启 | 通常几秒完成，dsh 自动重新连接，不需要刷新（dsh 的登录密钥保存在用户目录里，重启后旧 cookie 仍有效）；检查时恰好在重启中会显示"正在更新你的工作空间"，完成后自动回来 |
@@ -310,6 +312,10 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 - 你和 agent 可以同时操作；面板只提示"Agent 正在操作"，不会阻止 agent。
 - 右侧边栏插件直接以 dsh 客户端模块格式编写（`workspace-browser/client.js`），使用 dsh 预览阶段的右侧边栏接口（`sidebarRightTabs`、`sidebar.right.pane.tab` 插槽），升级 dsh 后需要回归。
 - dsh 自带的 `ui-sidebar-browser`（右侧边栏 Browser）是另一回事：它在用户自己的浏览器里用 iframe 打开网页，和 agent 无关，打开 `localhost` 指向用户自己的电脑；可以用配置补丁 `- id: ui-sidebar-browser` / `disabled: false` 另外开启，用来在对话旁边看文档。
+
+## 安全登录与密码保险库
+
+启用「安全登录」插件后，Agent 可以针对公开的 HTTPS 登录地址在对话里发起授权，无需逐站配置。表单在对话中展开，由独立的 Vault 域名接收密码。已保存的账号在 DSH「设置 → 密码保险库」管理。插件默认不分配；见[启用步骤和支持范围](docs/website-login.zh.md)。
 
 ## 知识库（RAG）
 

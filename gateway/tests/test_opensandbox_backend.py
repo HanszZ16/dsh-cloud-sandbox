@@ -1,6 +1,9 @@
+import subprocess
+from types import SimpleNamespace
+
 import pytest
 
-from dsh_gateway.backends.opensandbox_backend import memory_quantity, policy_files
+from dsh_gateway.backends.opensandbox_backend import _read_launch_url, memory_quantity, policy_files
 
 
 @pytest.mark.parametrize(
@@ -21,3 +24,18 @@ def test_a_file_outside_the_policy_directory_is_refused():
         policy_files({"/etc/passwd": b""})
     with pytest.raises(ValueError):
         policy_files({"/etc/dsh-cloud-other/x": b""})
+
+
+async def test_launch_token_ends_before_the_next_log_line_even_when_execd_strips_newlines(tmp_path):
+    url = "http://localhost:8000/u/admin/?token=test-token"
+    log = tmp_path / "web log.txt"
+    log.write_text(f"dsh web: http://localhost:8000/u/admin/?token=old\nstartup chatter\ndsh web: {url}\ndsh-cloud: ready\n")
+
+    async def run(command):
+        stdout = subprocess.check_output(["sh", "-c", command], text=True)
+        lines = [SimpleNamespace(text=line) for line in stdout.splitlines()]
+        return SimpleNamespace(error=None, exit_code=0, logs=SimpleNamespace(stdout=lines))
+
+    sandbox = SimpleNamespace(commands=SimpleNamespace(run=run))
+    assert await _read_launch_url(sandbox, str(log)) == url
+    assert await _read_launch_url(sandbox, str(tmp_path / "not-started")) == ""

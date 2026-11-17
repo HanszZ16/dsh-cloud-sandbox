@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from 'react'
 import { Link } from 'react-router-dom'
 
-import { api } from '../api.ts'
+import { api, type Me } from '../api.ts'
 import { useSession } from '../App.tsx'
 import { errorMessage, Field, FishLogo, useToast } from '../ui.tsx'
 
@@ -10,7 +10,7 @@ const KIND_LABEL = { bundle: '插件', mcp: 'MCP', patch: '配置' } as const
 /** Inside the workspace's account panel (an iframe) the page drops its own header. */
 const EMBEDDED = window.self !== window.top
 
-/** Account settings: API key, usage, assigned plugins, password. */
+/** Account settings: API key, website vault, usage, assigned plugins, password. */
 export function AccountPage() {
   const { me, refresh } = useSession()
   const [toast, showToast] = useToast()
@@ -54,6 +54,8 @@ export function AccountPage() {
 
         <ApiKeyCard onChange={refresh} showToast={showToast} />
 
+        <WebsiteVaultCard login={me.website_login} />
+
         <section className="card">
           <h3>今日用量</h3>
           <p className="sub">今天发出的模型请求次数</p>
@@ -88,6 +90,25 @@ export function AccountPage() {
       </main>
       {toast}
     </>
+  )
+}
+
+function WebsiteVaultCard({ login }: { login: Me['website_login'] }) {
+  return (
+    <section className="card">
+      <h3>网站密码保险库</h3>
+      <p className="sub">管理通过安全登录保存的网站账号。需要登录网站时，Agent 会在对话中发出授权请求。</p>
+      <div className="row between">
+        <span className="muted">
+          {login?.status === 'available' ? '安全登录已开放' : login?.status === 'unassigned' ? '安全登录尚未分配给你的账号' : '当前环境尚未启用安全登录'}
+        </span>
+        {login?.vault_url ? (
+          <a className="btn outline sm" href={login.vault_url} target="_blank" rel="noopener noreferrer">
+            打开保险库
+          </a>
+        ) : null}
+      </div>
+    </section>
   )
 }
 

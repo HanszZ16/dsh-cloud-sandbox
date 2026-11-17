@@ -1,0 +1,2 @@
+# Installed only on gateways that enable the website login service.
+playwright==1.65.2

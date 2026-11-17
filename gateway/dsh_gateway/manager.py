@@ -201,6 +201,7 @@ class SandboxManager:
                 "DEEPSEEK_BASE_URL": f"{callback}/llm/anthropic",
                 "DEEPSEEK_SEARCH_BASE_URL": f"{callback}/llm/anthropic/v1",
                 "HUB_TOKEN": hub_token,
+                **({"DSH_CLOUD_WEBSITE_LOGIN_CALLBACK": callback} if self._settings.website_login_origin else {}),
             },
             restore=await self._store.load(user_id),
             files=policy.files,

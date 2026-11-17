@@ -10,6 +10,14 @@ if [ -f .env ]; then
   . ./.env
   set +a
 fi
-exec uv run uvicorn dsh_gateway.app:create_app --factory \
+if [ "${1:-}" = "--test-website-login" ]; then
+  shift
+  . ./dev/website-login/prepare.sh
+fi
+set -- uvicorn dsh_gateway.app:create_app --factory \
   --host "${GATEWAY_BIND:-127.0.0.1}" --port "${GATEWAY_PORT:-8000}" \
   --timeout-graceful-shutdown 10 "$@"
+if [ -n "${WEBSITE_LOGIN_ORIGIN:-}" ]; then
+  set -- --with-requirements requirements-website-login.txt "$@"
+fi
+exec uv run "$@"

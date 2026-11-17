@@ -9,6 +9,11 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 _GATEWAY_DIR = Path(__file__).resolve().parent.parent
+DEMO_LOGIN_HOST = "dsh-signin-fixture.local"
+
+
+def demo_login_enabled() -> bool:
+    return os.environ.get("WEBSITE_LOGIN_LOCAL_DEMO") == "1"
 
 
 @dataclass(frozen=True)
@@ -63,6 +68,9 @@ class Settings:
     kb_quota_bytes: int = 500 * 1024 * 1024
     # Files panel uploads into a workspace: largest file.
     upload_max_file_bytes: int = 200 * 1024 * 1024
+    website_login_origin: str = ""
+    website_login_sites_file: str = ""
+    website_login_vault_key: str = ""
 
     @property
     def public_hostname(self) -> str:
@@ -75,14 +83,17 @@ class Settings:
 
 def _sandbox_env(callback_url: str) -> dict[str, str]:
     proxy = os.environ.get("SANDBOX_HTTP_PROXY", "").strip()
-    if not proxy:
+    demo = demo_login_enabled()
+    if not proxy and not demo:
         return {}
     # The model proxy is the gateway itself and must never go through the egress proxy.
-    no_proxy = ",".join(filter(None, [urlsplit(callback_url).hostname, "localhost", "127.0.0.1"]))
-    return {
-        "HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "http_proxy": proxy, "https_proxy": proxy,
-        "NO_PROXY": no_proxy, "no_proxy": no_proxy,
-    }
+    no_proxy = ",".join(filter(None, [urlsplit(callback_url).hostname, "localhost", "127.0.0.1", DEMO_LOGIN_HOST if demo else ""]))
+    env = {"NO_PROXY": no_proxy, "no_proxy": no_proxy}
+    if proxy:
+        env.update(HTTP_PROXY=proxy, HTTPS_PROXY=proxy, http_proxy=proxy, https_proxy=proxy)
+    if demo:
+        env["DSH_BROWSER_LOCAL_DEMO"] = "1"
+    return env
 
 
 def load_settings() -> Settings:
@@ -122,4 +133,7 @@ def load_settings() -> Settings:
         kb_max_file_bytes=int(float(os.environ.get("KB_MAX_FILE_MB", "50")) * 1024 * 1024),
         kb_quota_bytes=int(float(os.environ.get("KB_QUOTA_MB", "500")) * 1024 * 1024),
         upload_max_file_bytes=int(float(os.environ.get("UPLOAD_MAX_MB", "200")) * 1024 * 1024),
+        website_login_origin=os.environ.get("WEBSITE_LOGIN_ORIGIN", "").strip(),
+        website_login_sites_file=os.environ.get("WEBSITE_LOGIN_SITES_FILE", "").strip(),
+        website_login_vault_key=os.environ.get("WEBSITE_LOGIN_VAULT_KEY", ""),
     )

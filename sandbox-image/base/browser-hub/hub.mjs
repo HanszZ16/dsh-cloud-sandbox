@@ -43,6 +43,7 @@ const CDP_PORT = Number(process.env.CDP_PORT ?? 9222)
 const AGENT_PORT = Number(process.env.AGENT_PORT ?? 9223)
 const CHROMIUM = process.env.CHROMIUM ?? '/usr/bin/chromium'
 const PROFILE_DIR = process.env.BROWSER_PROFILE_DIR ?? join(process.env.HOME ?? '/home/agent', '.config/dsh-workspace-browser')
+const LOCAL_DEMO = process.env.DSH_BROWSER_LOCAL_DEMO === '1'
 const WIDTH = 1280
 const HEIGHT = 800
 const AGENT_IDLE_MS = 3000
@@ -88,6 +89,11 @@ async function launch() {
     rmSync(join(PROFILE_DIR, name), { force: true })
   }
   const userAgent = await desktopUserAgent()
+  const demoFlags = []
+  if (LOCAL_DEMO) {
+    const proxy = process.env.HTTPS_PROXY || process.env.https_proxy
+    if (proxy) demoFlags.push(`--proxy-server=${proxy}`, '--proxy-bypass-list=dsh-signin-fixture.local')
+  }
   log('starting Chromium')
   const child = spawn(CHROMIUM, [
     '--headless=new',
@@ -104,6 +110,7 @@ async function launch() {
     // Containers get a 64 MB /dev/shm, too small for Chromium's renderers.
     '--disable-dev-shm-usage',
     '--lang=zh-CN',
+    ...demoFlags,
     'about:blank',
   ], { stdio: 'ignore' })
   child.on('exit', (code, signal) => {
@@ -502,7 +509,58 @@ agentServer.listen(AGENT_PORT, '127.0.0.1', () => log(`agent endpoint http://127
 
 // Viewer endpoint (forwarded by the gateway)
 
+async function importWebsiteSession(request, response) {
+  if (!HUB_TOKEN || !authorized(request)) {
+    response.writeHead(401).end()
+    return
+  }
+  let cdp
+  try {
+    const chunks = []
+    let length = 0
+    for await (const chunk of request) {
+      length += chunk.length
+      if (length > 128 * 1024) {
+        response.writeHead(413).end()
+        return
+      }
+      chunks.push(chunk)
+    }
+    const { origin, cookies } = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    const url = new URL(origin)
+    if (url.protocol !== 'https:' || url.origin !== origin || !Array.isArray(cookies) || cookies.length < 1 || cookies.length > 16) {
+      response.writeHead(400).end()
+      return
+    }
+    const updates = cookies.map(({ name, value, path, expires, httpOnly, sameSite }) => {
+      if (typeof name !== 'string' || !name || typeof value !== 'string' || !value ||
+          typeof path !== 'string' || !path.startsWith('/') || !Number.isFinite(expires) ||
+          typeof httpOnly !== 'boolean' || !['Strict', 'Lax', 'None'].includes(sameSite)) throw new Error('invalid cookie')
+      // Omitting domain gives the cookie only to this host, even when the
+      // upstream cookie also covered its subdomains.
+      return { name, value, url: `${origin}/`, path, secure: true, httpOnly, sameSite,
+        ...(expires > 0 ? { expires } : {}) }
+    })
+    await ensureChrome()
+    const { webSocketDebuggerUrl } = await cdpJson('/json/version')
+    cdp = new Cdp(webSocketDebuggerUrl)
+    await cdp.opened
+    await cdp.send('Storage.setCookies', { cookies: updates })
+    response.writeHead(204).end()
+  } catch {
+    // Never report Chrome errors that may include the session cookie values.
+    response.writeHead(502).end()
+  } finally {
+    cdp?.close()
+  }
+}
+
 const viewerServer = http.createServer((request, response) => {
+  if (request.url === '/_internal/website-session') {
+    if (request.method !== 'POST') response.writeHead(405).end()
+    else void importWebsiteSession(request, response)
+    return
+  }
   response.writeHead(200, { 'content-type': 'text/plain' })
   response.end('dsh-cloud workspace browser hub\n')
 })

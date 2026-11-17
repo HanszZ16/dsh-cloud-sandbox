@@ -25,6 +25,7 @@ from .gateway import Gateway
 from .images import DSH_VERSION, RUNTIME, compatibility_problem
 from .policy import validate_plugin
 from .proxy import GATEWAY_COOKIE
+from .website_login import PLUGIN as WEBSITE_LOGIN_PLUGIN
 
 router = APIRouter(prefix="/api")
 
@@ -119,6 +120,9 @@ async def me(request: Request, user: User = Depends(signed_in)) -> dict[str, Any
     g = gw(request)
     group = g.db.get_group(user.group_id) or {}
     key = g.user_api_key(user)
+    plugins = g.db.effective_plugins(user)
+    vault_origin = g.settings.website_login_origin
+    website_login_assigned = any(p["key"] == WEBSITE_LOGIN_PLUGIN for p in plugins)
     return {
         **_user_json(g, user),
         "api_key_hint": mask_key(key) if key else None,
@@ -129,8 +133,12 @@ async def me(request: Request, user: User = Depends(signed_in)) -> dict[str, Any
         },
         "plugins": [
             {"name": p["name"], "kind": p["kind"], "description": p["description"]}
-            for p in g.db.effective_plugins(user)
+            for p in plugins
         ],
+        "website_login": {
+            "status": ("available" if website_login_assigned else "unassigned") if vault_origin else "disabled",
+            "vault_url": f"{vault_origin}/" if vault_origin else None,
+        },
         "sandbox": g.sandbox_info(user.username),
         "workspace_saved": g.manager.has_saved_state(user.username),
     }
