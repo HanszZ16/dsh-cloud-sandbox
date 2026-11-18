@@ -575,10 +575,12 @@ async function readJsonBody(request, maxBytes = 128 * 1024) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-async function evalInSession(cdp, sessionId, fnSource, arg) {
+async function evalInFrame(cdp, frame, fnSource, arg) {
   const expression = `(${fnSource})(${JSON.stringify(arg)})`
-  const result = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: false }, sessionId)
-  if (result.exceptionDetails) return null
+  const params = { expression, returnByValue: true, awaitPromise: false }
+  if (frame.contextId) params.contextId = frame.contextId
+  const result = await cdp.send('Runtime.evaluate', params, frame.sessionId).catch(() => null)
+  if (!result || result.exceptionDetails) return null
   return result.result?.value ?? null
 }
 
@@ -613,10 +615,21 @@ const _PROBE_AND_FILL_FRAME = String(({ mode, account, password, selectors }) =>
     const hasQrOr2faText = /扫码登录|微信扫码|安全验证|两步验证|验证码|2-step|verification code|enter the code|verify it.?s you/i.test(text)
     return { hasPassword, hasChallenge: hasChallenge || hasQrOr2faText }
   }
+  if (mode === 'switch-qq-tab') {
+    const qqTab = [...document.querySelectorAll('a, button, [role="tab"], [role="button"], span, div, li')].find((el) => {
+      if (!visible(el) || el.children.length > 2) return false
+      const t = (el.innerText || '').trim()
+      return /^(QQ登录|QQ账号登录|QQ帐号登录)$/i.test(t)
+    })
+    if (qqTab) { qqTab.click(); return { switched: true } }
+    return { switched: false }
+  }
   if (mode === 'switch-password-tab') {
     const hasPass = [...document.querySelectorAll('input[type="password"]')].some(visible)
     if (hasPass) return { switched: false, hasPassword: true }
-    const tab = [...document.querySelectorAll('a, button, [role="tab"], [role="button"], span, div')].find((el) => {
+    const byId = document.getElementById('switcher_plogin')
+    if (byId && visible(byId)) { byId.click(); return { switched: true, hasPassword: false } }
+    const tab = [...document.querySelectorAll('a, button, [role="tab"], [role="button"], span, div, li')].find((el) => {
       if (!visible(el) || el.children.length > 2) return false
       const t = (el.innerText || '').trim()
       return /^(密码登录|帐号密码登录|账号密码登录|使用密码登录|use password|password sign.?in)$/i.test(t)
@@ -659,8 +672,17 @@ const _PROBE_AND_FILL_FRAME = String(({ mode, account, password, selectors }) =>
   return null
 })
 
-async function collectFrameSessions(cdp, pageTargetId) {
+function flattenFrameIds(tree, out = []) {
+  if (tree?.frame?.id) out.push(tree.frame.id)
+  if (Array.isArray(tree?.childFrames)) {
+    for (const child of tree.childFrames) flattenFrameIds(child, out)
+  }
+  return out
+}
+
+async function collectFrames(cdp, pageTargetId, attached) {
   const { sessionId: pageSession } = await cdp.send('Target.attachToTarget', { targetId: pageTargetId, flatten: true })
+  attached.push(pageSession)
   await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, pageSession).catch(() => undefined)
   const sessions = [pageSession]
   const { targetInfos } = await cdp.send('Target.getTargets')
@@ -668,11 +690,26 @@ async function collectFrameSessions(cdp, pageTargetId) {
     if (info.type === 'iframe') {
       try {
         const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: info.targetId, flatten: true })
+        attached.push(sessionId)
         sessions.push(sessionId)
       } catch { /* ignore transient iframe */ }
     }
   }
-  return sessions
+  const frames = []
+  for (const sessionId of sessions) {
+    await cdp.send('Page.enable', {}, sessionId).catch(() => undefined)
+    const tree = await cdp.send('Page.getFrameTree', {}, sessionId).catch(() => null)
+    const frameIds = tree?.frameTree ? flattenFrameIds(tree.frameTree) : []
+    if (frameIds.length === 0) {
+      frames.push({ sessionId, contextId: null })
+      continue
+    }
+    for (const frameId of frameIds) {
+      const world = await cdp.send('Page.createIsolatedWorld', { frameId, worldName: 'dsh-login', grantUniveralAccess: true }, sessionId).catch(() => null)
+      frames.push({ sessionId, contextId: world?.executionContextId ?? null })
+    }
+  }
+  return frames
 }
 
 async function fillWebsiteLogin(request, response) {
@@ -710,41 +747,46 @@ async function fillWebsiteLogin(request, response) {
       await new Promise((r) => setTimeout(r, 1800))
     }
 
-    let sessions = await collectFrameSessions(cdp, target.targetId)
-    attached.push(...sessions)
+    let frames = await collectFrames(cdp, target.targetId, attached)
 
-    // 1) Try switching to password tab (e.g., QQ Mail defaults to QR tab).
-    for (const sid of sessions) {
-      const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'switch-password-tab' })
+    // 1) Try switching to QQ login tab first (if page defaults to WeChat QR tab), then password tab.
+    for (const frame of frames) {
+      const res = await evalInFrame(cdp, frame, _PROBE_AND_FILL_FRAME, { mode: 'switch-qq-tab' })
+      if (res?.switched) {
+        await new Promise((r) => setTimeout(r, 800))
+        frames = await collectFrames(cdp, target.targetId, attached)
+        break
+      }
+    }
+    for (const frame of frames) {
+      const res = await evalInFrame(cdp, frame, _PROBE_AND_FILL_FRAME, { mode: 'switch-password-tab' })
       if (res?.switched) {
         await new Promise((r) => setTimeout(r, 600))
-        sessions = await collectFrameSessions(cdp, target.targetId)
-        attached.push(...sessions)
+        frames = await collectFrames(cdp, target.targetId, attached)
         break
       }
     }
 
     // 2) Try filling full form (username + password + submit).
     let filled = false
-    for (const sid of sessions) {
-      const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'fill-all', account: username, password, selectors })
+    for (const frame of frames) {
+      const res = await evalInFrame(cdp, frame, _PROBE_AND_FILL_FRAME, { mode: 'fill-all', account: username, password, selectors })
       if (res?.filled) { filled = true; break }
     }
 
     // 3) If no password field yet, try 2-step login (fill username + Next, wait for password).
     if (!filled) {
       let step1 = false
-      for (const sid of sessions) {
-        const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'fill-step1', account: username })
+      for (const frame of frames) {
+        const res = await evalInFrame(cdp, frame, _PROBE_AND_FILL_FRAME, { mode: 'fill-step1', account: username })
         if (res?.step1) { step1 = true; break }
       }
       if (step1) {
         for (let attempt = 0; attempt < 8 && !filled; attempt++) {
           await new Promise((r) => setTimeout(r, 500))
-          sessions = await collectFrameSessions(cdp, target.targetId)
-          attached.push(...sessions)
-          for (const sid of sessions) {
-            const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'fill-all', account: username, password, selectors })
+          frames = await collectFrames(cdp, target.targetId, attached)
+          for (const frame of frames) {
+            const res = await evalInFrame(cdp, frame, _PROBE_AND_FILL_FRAME, { mode: 'fill-all', account: username, password, selectors })
             if (res?.filled) { filled = true; break }
           }
         }
@@ -759,10 +801,9 @@ async function fillWebsiteLogin(request, response) {
 
     await new Promise((r) => setTimeout(r, 1800))
     let needsTakeover = false
-    sessions = await collectFrameSessions(cdp, target.targetId)
-    attached.push(...sessions)
-    for (const sid of sessions) {
-      const check = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'check-challenge' })
+    frames = await collectFrames(cdp, target.targetId, attached)
+    for (const frame of frames) {
+      const check = await evalInFrame(cdp, frame, _PROBE_AND_FILL_FRAME, { mode: 'check-challenge' })
       if (check?.hasPassword || check?.hasChallenge) { needsTakeover = true; break }
     }
     if (needsTakeover) {
