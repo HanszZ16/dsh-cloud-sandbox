@@ -94,6 +94,25 @@ export function AccountPage() {
 }
 
 function WebsiteVaultCard({ login }: { login: Me['website_login'] }) {
+  const [opening, setOpening] = useState(false)
+  const openVault = async () => {
+    if (!login?.vault_url || opening) return
+    setOpening(true)
+    const win = window.open('', '_blank')
+    if (win) win.opener = null
+    try {
+      const res = await fetch('/api/me/vault-ticket', { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
+      const data = res.ok ? await res.json() : null
+      const url = new URL(login.vault_url)
+      if (typeof data?.ticket === 'string') url.searchParams.set('ticket', data.ticket)
+      if (win) win.location.href = url.href
+      else window.open(url.href, '_blank', 'noopener,noreferrer')
+    } catch {
+      if (win) win.location.href = login.vault_url
+    } finally {
+      setOpening(false)
+    }
+  }
   return (
     <section className="card">
       <h3>网站密码保险库</h3>
@@ -103,9 +122,9 @@ function WebsiteVaultCard({ login }: { login: Me['website_login'] }) {
           {login?.status === 'available' ? '安全登录已开放' : login?.status === 'unassigned' ? '安全登录尚未分配给你的账号' : '当前环境尚未启用安全登录'}
         </span>
         {login?.vault_url ? (
-          <a className="btn outline sm" href={login.vault_url} target="_blank" rel="noopener noreferrer">
+          <button type="button" className="btn outline sm" disabled={opening} onClick={() => { void openVault() }}>
             打开保险库
-          </a>
+          </button>
         ) : null}
       </div>
     </section>

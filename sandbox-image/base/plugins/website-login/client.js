@@ -84,12 +84,26 @@ window.__ModuleLoader__.load({
           } }, t('retry'))) : null)
     }
 
-    function embeddedUrl(target) {
+    function embeddedUrl(target, ticket) {
       target.search = '?embed=1'
+      if (ticket) target.searchParams.set('ticket', ticket)
       const theme = getComputedStyle(document.documentElement).colorScheme
       if (theme === 'dark' || theme === 'light') target.searchParams.set('theme', theme)
       target.hash = ''
       return target.href
+    }
+
+    async function fetchVaultTicket(signal) {
+      try {
+        const response = await fetch('/api/me/vault-ticket', {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store', signal,
+        })
+        if (!response.ok) return null
+        const data = await response.json()
+        return typeof data?.ticket === 'string' ? data.ticket : null
+      } catch {
+        return null
+      }
     }
 
     function SettingsVault({ t }) {
@@ -101,8 +115,10 @@ window.__ModuleLoader__.load({
           .then(response => {
             if (!response.ok) throw new Error('unavailable')
             return response.json()
-          }).then(data => {
-            if (!abort.signal.aborted) setState(data.website_login ?? { status: 'disabled' })
+          }).then(async data => {
+            const login = data.website_login ?? { status: 'disabled' }
+            const ticket = login.vault_url ? await fetchVaultTicket(abort.signal) : null
+            if (!abort.signal.aborted) setState({ ...login, ticket })
           }).catch(() => { if (!abort.signal.aborted) setState({ status: 'failed' }) })
         return () => abort.abort()
       }, [attempt])
@@ -112,7 +128,7 @@ window.__ModuleLoader__.load({
           const target = new URL(state.vault_url)
           if (target.protocol === 'https:' && target.hostname !== location.hostname && !target.username && !target.password) {
             target.pathname = '/vault'
-            return h(VaultFrame, { src: embeddedUrl(target), t, settings: true })
+            return h(VaultFrame, { src: embeddedUrl(target, state.ticket), t, settings: true })
           }
         } catch { /* Never embed an invalid URL. */ }
       }
@@ -128,6 +144,7 @@ window.__ModuleLoader__.load({
     function SignInCard({ t, callId, phase, block }) {
       const [result, setResult] = useState(null)
       const [opened, setOpened] = useState(null)
+      const [opening, setOpening] = useState(false)
       const frameUrl = opened?.callId === callId ? opened?.url : null
       useEffect(() => {
         const mount = location.pathname.match(/^\/u\/[^/]+\//)?.[0]
@@ -153,7 +170,7 @@ window.__ModuleLoader__.load({
         return () => { controller.abort(); clearTimeout(timer) }
       }, [callId, phase])
 
-      let href, secureWorkspace, host
+      let formTarget, secureWorkspace, host
       try { host = new URL(result?.origin).hostname } catch { /* Host unknown while preparing. */ }
       if (phase !== 'result' && result?.status === 'pending' && result.form_url) {
         try {
@@ -163,9 +180,20 @@ window.__ModuleLoader__.load({
             secureWorkspace = gateway.origin + location.pathname
           } else if (location.origin === gateway.origin && target.protocol === 'https:' && target.hostname !== location.hostname && !target.username && !target.password &&
               /^\/requests\/[A-Za-z0-9_-]+$/.test(target.pathname)) {
-            href = embeddedUrl(target)
+            formTarget = target
           }
         } catch { /* Never render an invalid link. */ }
+      }
+      const toggleForm = async () => {
+        if (frameUrl) { setOpened(null); return }
+        if (!formTarget || opening) return
+        setOpening(true)
+        try {
+          const ticket = await fetchVaultTicket()
+          setOpened({ callId, url: embeddedUrl(new URL(formTarget.href), ticket) })
+        } finally {
+          setOpening(false)
+        }
       }
       let recorded
       if (phase === 'result') {
@@ -180,8 +208,8 @@ window.__ModuleLoader__.load({
             host ? h('div', { style: css.host, title: result.origin }, host) : null),
           h('span', { role: 'status', style: status === 'signed-in' ? { ...css.badge,
             background: 'light-dark(#e7f5ec, #244331)', color: 'light-dark(#216530, #b1e9bf)' } : css.badge }, t(status)),
-          href || frameUrl ? h('button', { type: 'button', style: css.button, 'aria-expanded': Boolean(frameUrl),
-            onClick: () => setOpened(frameUrl ? null : { callId, url: href }) }, t(frameUrl ? 'close' : 'open')) : null),
+          formTarget || frameUrl ? h('button', { type: 'button', style: css.button, 'aria-expanded': Boolean(frameUrl),
+            disabled: opening, onClick: () => { void toggleForm() } }, t(frameUrl ? 'close' : 'open')) : null),
         secureWorkspace ? h('div', { style: { ...css.detail, ...css.message } }, t('https'),
           h('a', { style: css.button, href: secureWorkspace }, t('workspace'))) : null,
         frameUrl ? h(VaultFrame, { src: frameUrl, t }) : null)

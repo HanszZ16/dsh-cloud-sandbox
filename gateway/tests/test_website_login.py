@@ -257,3 +257,15 @@ def test_native_vault_embeds_and_manages_credentials_without_third_party_cookies
     assert not gateway.db.website_credentials(owner_id)
     assert "验证 DSH 身份" in client.post(url, data={"action": "logout", "grant": grant}, headers=ORIGIN).text
     assert "验证 DSH 身份" in client.post(url, data=fields, headers=ORIGIN).text
+
+
+def test_vault_sso_ticket_skips_second_login_and_is_single_use(service):
+    client, _, _ = service
+    ticket_res = client.post(f"{GATEWAY}/api/me/vault-ticket")
+    assert ticket_res.status_code == 200
+    ticket = ticket_res.json()["ticket"]
+    vault_res = client.get(f"{VAULT}/vault?embed=1&ticket={ticket}")
+    assert vault_res.status_code == 200 and "新建登录" in vault_res.text
+    # Ticket is single-use; replaying it falls back to the login prompt.
+    replay = client.get(f"{VAULT}/vault?embed=1&ticket={ticket}")
+    assert replay.status_code == 200 and "验证 DSH 身份" in replay.text

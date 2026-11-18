@@ -418,6 +418,29 @@ def install_website_login(app: FastAPI, settings: Settings) -> None:
             data["form_url"] = f"{origin}/requests/{item.id}"
         return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
+    def ticket_hash(ticket: str) -> str:
+        return token_hash("website-login-ticket:" + ticket)
+
+    def consume_ticket(request: Request):
+        ticket = request.query_params.get("ticket", "")
+        if not FORM_GRANT.fullmatch(ticket):
+            return None
+        hashed = ticket_hash(ticket)
+        user = gw().db.session_user(hashed)
+        gw().db.delete_session(hashed)
+        if user is None or user.disabled:
+            return None
+        return user
+
+    @app.post("/api/me/vault-ticket")
+    async def issue_vault_ticket(request: Request):
+        user = gw().session_user(request)
+        if user is None or user.disabled:
+            raise HTTPException(401)
+        ticket = new_session_token()
+        gw().db.create_session(ticket_hash(ticket), user.id, 60)
+        return JSONResponse({"ticket": ticket}, headers={"Cache-Control": "no-store"})
+
     def vault_grant_hash(grant: str) -> str:
         return token_hash("website-login-vault-manage:" + grant)
 
@@ -429,6 +452,18 @@ def install_website_login(app: FastAPI, settings: Settings) -> None:
         action = values.get("action")
         grant = values.get("grant", "")
         grant = grant if embedded and FORM_GRANT.fullmatch(grant) else ""
+        if request.method == "GET" and request.query_params.get("ticket"):
+            ticket_user = consume_ticket(request)
+            if ticket_user is not None:
+                if not embedded:
+                    token = new_session_token()
+                    gw().db.create_session(token_hash("website-login:" + token), ticket_user.id, SESSION_TTL)
+                    response = RedirectResponse(request.url.path, status_code=303)
+                    response.set_cookie(COOKIE, token, max_age=SESSION_TTL, secure=True, httponly=True, samesite="lax", path="/")
+                    return response
+                grant = new_session_token()
+                gw().db.create_session(vault_grant_hash(grant), ticket_user.id, SESSION_TTL)
+                return _page(request, "密码保险库", vault_markup(gw().db.website_credentials(ticket_user.id), grant, enabled(ticket_user), ""))
         if action == "authenticate":
             if not embedded:
                 return await authenticate(request, values)
@@ -503,6 +538,10 @@ def install_website_login(app: FastAPI, settings: Settings) -> None:
             user = await verify_dsh_user(request, values)
             if user is None:
                 return _login_page(request, '<p role="alert">DSH 账号或密码无效。</p>')
+        elif request.method == "GET" and request.query_params.get("ticket"):
+            user = consume_ticket(request) or (form_user(request, values, item) if item else session(request))
+            if user is None:
+                return _login_page(request)
         else:
             user = form_user(request, values, item) if item else session(request)
             if user is None:
@@ -511,7 +550,7 @@ def install_website_login(app: FastAPI, settings: Settings) -> None:
             return _page(request, "请求已失效", "<p>请回到 DSH 重新发起登录。</p>", 404)
         if item.status != "pending":
             return _page(request, "请求已处理", "<p>请回到 DSH 查看状态。</p>", 409)
-        if action == "authenticate":
+        if action == "authenticate" or (request.method == "GET" and request.query_params.get("ticket") and embedded):
             grant = new_session_token()
             gw().db.create_session(grant_hash(item, grant), user.id, max(1, int(item.expires - time.monotonic()) + 1))
             return website_form(request, item, grant, embedded=True)
