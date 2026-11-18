@@ -71,6 +71,7 @@ class Settings:
     website_login_origin: str = ""
     website_login_sites_file: str = ""
     website_login_vault_key: str = ""
+    website_login_mode: str = "gateway"
 
     @property
     def public_hostname(self) -> str:
@@ -136,4 +137,5 @@ def load_settings() -> Settings:
         website_login_origin=os.environ.get("WEBSITE_LOGIN_ORIGIN", "").strip(),
         website_login_sites_file=os.environ.get("WEBSITE_LOGIN_SITES_FILE", "").strip(),
         website_login_vault_key=os.environ.get("WEBSITE_LOGIN_VAULT_KEY", ""),
+        website_login_mode=os.environ.get("WEBSITE_LOGIN_MODE", "gateway").strip().lower() or "gateway",
     )

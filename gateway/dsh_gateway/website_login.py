@@ -583,25 +583,51 @@ def install_website_login(app: FastAPI, settings: Settings) -> None:
         item.record.touch()
         failure = "browser-login"
         relay_status: int | None = None
+        takeover = False
         try:
             async with asyncio.timeout(45):
-                cookies = await sign_in(item.website, username, password)
-                if not active(item) or item.status != "working" or form_user(request, values, item) is None:
-                    failure = "request-ended"
-                    raise RuntimeError("website login request is no longer active")
-                if not cookies:
-                    raise WebsiteBrowserError("session-cookie-missing")
-                handle = item.record.handle
-                failure = "workspace-handoff"
-                item.status = "handing-off"
-                response = await app.state.sandbox_http.post(
-                    handle.browser_url.rstrip("/") + "/_internal/website-session", headers=handle.browser_headers,
-                    json={"origin": item.website.origin, "cookies": cookies}, timeout=20,
-                )
-                if response.status_code != 204:
-                    relay_status = response.status_code
-                    raise RuntimeError("workspace browser did not accept the session")
-            item.status = "signed-in"
+                if gw().settings.website_login_mode == "sandbox":
+                    handle = item.record.handle
+                    failure = "workspace-handoff"
+                    item.status = "handing-off"
+                    login_url = item.website.login_url if isinstance(item.website, PublicWebsite) else item.website.origin + item.website.login_path
+                    selectors = None if isinstance(item.website, PublicWebsite) else [
+                        item.website.username_selector, item.website.password_selector, item.website.submit_selector,
+                    ]
+                    response = await app.state.sandbox_http.post(
+                        handle.browser_url.rstrip("/") + "/_internal/website-fill", headers=handle.browser_headers,
+                        json={"origin": item.website.origin, "login_url": login_url,
+                              "username": username, "password": password, "selectors": selectors},
+                        timeout=35,
+                    )
+                    if response.status_code != 200:
+                        relay_status = response.status_code
+                        raise RuntimeError("workspace browser did not accept the login")
+                    fill_data = response.json()
+                    if fill_data.get("status") == "needs-takeover":
+                        takeover = True
+                        item.status = "failed"
+                        item.failure_reason = "needs-takeover"
+                    else:
+                        item.status = "signed-in"
+                else:
+                    cookies = await sign_in(item.website, username, password)
+                    if not active(item) or item.status != "working" or form_user(request, values, item) is None:
+                        failure = "request-ended"
+                        raise RuntimeError("website login request is no longer active")
+                    if not cookies:
+                        raise WebsiteBrowserError("session-cookie-missing")
+                    handle = item.record.handle
+                    failure = "workspace-handoff"
+                    item.status = "handing-off"
+                    response = await app.state.sandbox_http.post(
+                        handle.browser_url.rstrip("/") + "/_internal/website-session", headers=handle.browser_headers,
+                        json={"origin": item.website.origin, "cookies": cookies}, timeout=20,
+                    )
+                    if response.status_code != 204:
+                        relay_status = response.status_code
+                        raise RuntimeError("workspace browser did not accept the session")
+                    item.status = "signed-in"
         except Exception as error:
             # Browser/transport errors can include arguments or session material.
             failure = error.stage if isinstance(error, WebsiteBrowserError) else failure
@@ -630,6 +656,16 @@ def install_website_login(app: FastAPI, settings: Settings) -> None:
                 gw().db.delete_session(grant_session)
             if item.status in {"working", "handing-off"}:
                 item.status = "failed"
+
+        if takeover:
+            gw().db.audit(user.username, "website-login-takeover", item.website.origin)
+            if action == "submit" and values.get("save") == "1":
+                try:
+                    gw().db.save_website_credential(user.id, item.website.origin, username, vault.encrypt(password))
+                    gw().db.audit(user.username, "website-login-vault-save", item.website.origin)
+                except Exception:
+                    pass
+            return _page(request, "需要人工验证", "<p>已将账号密码填入工作空间浏览器，但该网站需要扫码、滑块或二次验证。右侧「远程浏览器」已自动打开，请直接完成验证。</p>")
 
         gw().db.audit(user.username, "website-login-authorized", item.website.origin)
         if action == "submit" and values.get("save") == "1":

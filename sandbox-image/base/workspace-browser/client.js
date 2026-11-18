@@ -383,7 +383,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register({
         name: 'sidebar.right.pane.tab.title', key: ID, locale: NS,
       }, WorkspaceBrowserTitle)), 'dsh-cloud-workspace-browser: title')
-      ctx.effect(() => watchAgent(() => {
+      ctx.effect(() => watchTakeover(() => {
         try {
           // Opens the tab in the current session, or brings an open one forward.
           ctx.sidebarRight.openTab(KIND)
@@ -391,16 +391,15 @@ window.__ModuleLoader__.load({
           // No session is selected (e.g. the welcome page): nothing to open the tab in.
           console.debug('dsh-cloud-workspace-browser: not opening the live view', err)
         }
-      }), 'dsh-cloud-workspace-browser: follow agent')
+      }), 'dsh-cloud-workspace-browser: takeover')
     }
 
-    /** Call `onStart` each time the agent starts operating the browser; returns the disposer. */
-    function watchAgent(onStart) {
+    /** Call `onTakeover` when the hub requests human takeover; returns the disposer. */
+    function watchTakeover(onTakeover) {
       let stopped = false
       let socket = null
       let timer = 0
       let retry = 0
-      let active = false
       const connect = () => {
         socket = new WebSocket(socketUrl(true))
         socket.onopen = () => {
@@ -408,13 +407,10 @@ window.__ModuleLoader__.load({
         }
         socket.onmessage = (event) => {
           const message = JSON.parse(event.data)
-          if (message.type !== 'agent') return
-          if (message.active && !active) onStart()
-          active = Boolean(message.active)
+          if (message.type === 'takeover') onTakeover()
         }
         socket.onclose = (event) => {
           if (stopped) return
-          active = false
           // Without a browser hub (or a valid session), check back rarely.
           const delay = event.code === NO_BROWSER || event.code === NOT_SIGNED_IN ? 60000 : 1000 * 2 ** Math.min(++retry, 5)
           timer = window.setTimeout(connect, delay)

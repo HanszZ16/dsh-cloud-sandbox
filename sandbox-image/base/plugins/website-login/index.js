@@ -95,6 +95,6 @@ export function apply(ctx) {
 
   ctx.systemPrompt.section({
     name: 'tool:website-login', order: 2360, interpolate: false,
-    text: () => 'When a user explicitly asks to sign in to a website with a password, first check website_login_sites for a configured site_id, or use request_website_login with the exact public HTTPS login URL only if the site uses a single-page same-origin password form. Do not trigger request_website_login automatically when browsing general websites. Do not enter or ask for passwords through chat, browser tools, ask_user_question, or tool arguments. Never claim sign-in succeeded unless the tool reports signed-in. If declined, failed, or unavailable, do not retry for that site; ask the user to sign in manually in the Remote browser instead.',
+    text: () => 'When a website needs a password, first check website_login_sites for a configured site_id, or call request_website_login with the exact public HTTPS login URL. Do not enter or ask for passwords through chat, browser tools, ask_user_question, or tool arguments. Never claim sign-in succeeded unless the tool reports signed-in. If it returns reason "needs-takeover", credentials were entered in the workspace browser and Remote browser was opened for the user to complete CAPTCHA/QR/2FA—ask the user for an OTP or to finish verification there. If declined, failed, or unavailable, do not retry for that site.',
   })
 }

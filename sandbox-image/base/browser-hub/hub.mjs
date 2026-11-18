@@ -462,6 +462,11 @@ function announceAgent(active) {
   for (const socket of watchers) if (socket.readyState === WebSocket.OPEN) socket.send(text)
 }
 
+function announceTakeover() {
+  const text = JSON.stringify({ type: 'takeover' })
+  for (const socket of watchers) if (socket.readyState === WebSocket.OPEN) socket.send(text)
+}
+
 function agentActivity() {
   if (!viewer.agentActive) announceAgent(true)
   clearTimeout(agentTimer)
@@ -555,10 +560,236 @@ async function importWebsiteSession(request, response) {
   }
 }
 
+async function readJsonBody(request, maxBytes = 128 * 1024) {
+  const chunks = []
+  let length = 0
+  for await (const chunk of request) {
+    length += chunk.length
+    if (length > maxBytes) {
+      const err = new Error('payload too large')
+      err.status = 413
+      throw err
+    }
+    chunks.push(chunk)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+async function evalInSession(cdp, sessionId, fnSource, arg) {
+  const expression = `(${fnSource})(${JSON.stringify(arg)})`
+  const result = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: false }, sessionId)
+  if (result.exceptionDetails) return null
+  return result.result?.value ?? null
+}
+
+const _PROBE_AND_FILL_FRAME = String(({ mode, account, password, selectors }) => {
+  const visible = (el) => el && !el.matches(':disabled') && el.getClientRects().length > 0
+    && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none'
+  const setVal = (el, val) => {
+    const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+    if (proto?.set) proto.set.call(el, val)
+    else el.value = val
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  const clickEl = (el) => {
+    if (!el) return false
+    el.click()
+    return true
+  }
+  const findSubmit = (scope) => {
+    const root = scope || document
+    const candidates = [...root.querySelectorAll('button, input[type="submit"], input[type="button"], a[role="button"], [role="button"]')].filter(visible)
+    const explicit = candidates.find((e) => (e instanceof HTMLButtonElement || e instanceof HTMLInputElement) && e.type === 'submit')
+    if (explicit) return explicit
+    return candidates.find((e) => /log\s*in|sign\s*in|next|continue|submit|登录|下一步|继续|确定/i.test((e.innerText || e.value || '').trim()))
+  }
+  if (mode === 'check-challenge') {
+    const hasPassword = [...document.querySelectorAll('input[type="password"]')].some(visible)
+    const hasChallenge = [...document.querySelectorAll(
+      'input[autocomplete="one-time-code"], input[name*="captcha" i], input[name*="otp" i], input[name*="code" i], iframe[src*="captcha" i], iframe[src*="recaptcha" i], iframe[src*="turnstile" i]'
+    )].some(visible)
+    const text = (document.body?.innerText || '').slice(0, 4000)
+    const hasQrOr2faText = /扫码登录|微信扫码|安全验证|两步验证|验证码|2-step|verification code|enter the code|verify it.?s you/i.test(text)
+    return { hasPassword, hasChallenge: hasChallenge || hasQrOr2faText }
+  }
+  if (mode === 'switch-password-tab') {
+    const hasPass = [...document.querySelectorAll('input[type="password"]')].some(visible)
+    if (hasPass) return { switched: false, hasPassword: true }
+    const tab = [...document.querySelectorAll('a, button, [role="tab"], [role="button"], span, div')].find((el) => {
+      if (!visible(el) || el.children.length > 2) return false
+      const t = (el.innerText || '').trim()
+      return /^(密码登录|帐号密码登录|账号密码登录|使用密码登录|use password|password sign.?in)$/i.test(t)
+    })
+    if (tab) { tab.click(); return { switched: true, hasPassword: false } }
+    return { switched: false, hasPassword: false }
+  }
+  let userEl = null
+  let passEl = null
+  let submitEl = null
+  if (Array.isArray(selectors) && selectors.length === 3) {
+    userEl = document.querySelector(selectors[0])
+    passEl = document.querySelector(selectors[1])
+    submitEl = document.querySelector(selectors[2])
+  } else {
+    passEl = [...document.querySelectorAll('input[type="password"]')].find(visible) || null
+    const scope = passEl?.form || document
+    const userInputs = [...scope.querySelectorAll('input[type="email"], input[type="text"], input[type="tel"], input:not([type])')]
+      .filter((e) => visible(e) && !e.readOnly && !/one-time-code|captcha|verify|otp|search/i.test(`${e.autocomplete} ${e.name} ${e.id} ${e.placeholder}`))
+    userEl = userInputs.find((e) => /username|email/i.test(e.autocomplete) || e.type === 'email')
+      || userInputs.find((e) => /user|email|account|login|uin|phone|id/i.test(`${e.name} ${e.id} ${e.placeholder}`))
+      || userInputs[0] || null
+    submitEl = findSubmit(passEl?.form || userEl?.form || document)
+  }
+  if (mode === 'fill-step1') {
+    if (!userEl || passEl) return { step1: false }
+    setVal(userEl, account)
+    if (submitEl) clickEl(submitEl)
+    else if (userEl.form) HTMLFormElement.prototype.requestSubmit.call(userEl.form)
+    return { step1: true }
+  }
+  if (mode === 'fill-all') {
+    if (!passEl) return { filled: false }
+    if (userEl && !userEl.readOnly) setVal(userEl, account)
+    setVal(passEl, password)
+    if (submitEl) clickEl(submitEl)
+    else if (passEl.form) HTMLFormElement.prototype.requestSubmit.call(passEl.form)
+    return { filled: true, hadUser: Boolean(userEl) }
+  }
+  return null
+})
+
+async function collectFrameSessions(cdp, pageTargetId) {
+  const { sessionId: pageSession } = await cdp.send('Target.attachToTarget', { targetId: pageTargetId, flatten: true })
+  await cdp.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, pageSession).catch(() => undefined)
+  const sessions = [pageSession]
+  const { targetInfos } = await cdp.send('Target.getTargets')
+  for (const info of targetInfos) {
+    if (info.type === 'iframe') {
+      try {
+        const { sessionId } = await cdp.send('Target.attachToTarget', { targetId: info.targetId, flatten: true })
+        sessions.push(sessionId)
+      } catch { /* ignore transient iframe */ }
+    }
+  }
+  return sessions
+}
+
+async function fillWebsiteLogin(request, response) {
+  if (!authorized(request)) {
+    response.writeHead(401).end()
+    return
+  }
+  let cdp
+  const attached = []
+  try {
+    const body = await readJsonBody(request)
+    const { origin, login_url: loginUrl, username, password, selectors } = body ?? {}
+    const parsed = new URL(origin)
+    if (parsed.protocol !== 'https:' || parsed.origin !== origin || typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
+      response.writeHead(400).end()
+      return
+    }
+    await ensureChrome()
+    const { webSocketDebuggerUrl } = await cdpJson('/json/version')
+    cdp = new Cdp(webSocketDebuggerUrl)
+    await cdp.opened
+    let { targetInfos } = await cdp.send('Target.getTargets')
+    const pages = targetInfos.filter((t) => t.type === 'page')
+    let target = pages.find((t) => typeof t.url === 'string' && t.url.startsWith(origin))
+      ?? pages.find((t) => t.targetId === viewer.activeId)
+      ?? pages.at(-1)
+    if (!target) {
+      const created = await cdp.send('Target.createTarget', { url: loginUrl || origin })
+      target = { targetId: created.targetId, url: loginUrl || origin }
+      await new Promise((r) => setTimeout(r, 1500))
+    } else if (loginUrl && (!target.url || target.url === 'about:blank' || !target.url.startsWith(origin))) {
+      const { sessionId: navSid } = await cdp.send('Target.attachToTarget', { targetId: target.targetId, flatten: true })
+      await cdp.send('Page.navigate', { url: loginUrl }, navSid)
+      await cdp.send('Target.detachFromTarget', { sessionId: navSid }).catch(() => undefined)
+      await new Promise((r) => setTimeout(r, 1800))
+    }
+
+    let sessions = await collectFrameSessions(cdp, target.targetId)
+    attached.push(...sessions)
+
+    // 1) Try switching to password tab (e.g., QQ Mail defaults to QR tab).
+    for (const sid of sessions) {
+      const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'switch-password-tab' })
+      if (res?.switched) {
+        await new Promise((r) => setTimeout(r, 600))
+        sessions = await collectFrameSessions(cdp, target.targetId)
+        attached.push(...sessions)
+        break
+      }
+    }
+
+    // 2) Try filling full form (username + password + submit).
+    let filled = false
+    for (const sid of sessions) {
+      const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'fill-all', account: username, password, selectors })
+      if (res?.filled) { filled = true; break }
+    }
+
+    // 3) If no password field yet, try 2-step login (fill username + Next, wait for password).
+    if (!filled) {
+      let step1 = false
+      for (const sid of sessions) {
+        const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'fill-step1', account: username })
+        if (res?.step1) { step1 = true; break }
+      }
+      if (step1) {
+        for (let attempt = 0; attempt < 8 && !filled; attempt++) {
+          await new Promise((r) => setTimeout(r, 500))
+          sessions = await collectFrameSessions(cdp, target.targetId)
+          attached.push(...sessions)
+          for (const sid of sessions) {
+            const res = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'fill-all', account: username, password, selectors })
+            if (res?.filled) { filled = true; break }
+          }
+        }
+      }
+    }
+
+    if (!filled) {
+      announceTakeover()
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ status: 'needs-takeover', reason: 'form-unavailable' }))
+      return
+    }
+
+    await new Promise((r) => setTimeout(r, 1800))
+    let needsTakeover = false
+    sessions = await collectFrameSessions(cdp, target.targetId)
+    attached.push(...sessions)
+    for (const sid of sessions) {
+      const check = await evalInSession(cdp, sid, _PROBE_AND_FILL_FRAME, { mode: 'check-challenge' })
+      if (check?.hasPassword || check?.hasChallenge) { needsTakeover = true; break }
+    }
+    if (needsTakeover) {
+      announceTakeover()
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ status: 'needs-takeover' }))
+      return
+    }
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ status: 'signed-in' }))
+  } catch {
+    response.writeHead(502).end()
+  } finally {
+    for (const sid of new Set(attached)) {
+      await cdp?.send('Target.detachFromTarget', { sessionId: sid }).catch(() => undefined)
+    }
+    cdp?.close()
+  }
+}
+
 const viewerServer = http.createServer((request, response) => {
   if (request.url === '/_internal/website-session') {
     if (request.method !== 'POST') response.writeHead(405).end()
     else void importWebsiteSession(request, response)
+    return
+  }
+  if (request.url === '/_internal/website-fill') {
+    if (request.method !== 'POST') response.writeHead(405).end()
+    else void fillWebsiteLogin(request, response)
     return
   }
   response.writeHead(200, { 'content-type': 'text/plain' })

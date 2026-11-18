@@ -269,3 +269,29 @@ def test_vault_sso_ticket_skips_second_login_and_is_single_use(service):
     # Ticket is single-use; replaying it falls back to the login prompt.
     replay = client.get(f"{VAULT}/vault?embed=1&ticket={ticket}")
     assert replay.status_code == 200 and "验证 DSH 身份" in replay.text
+
+
+def test_sandbox_fill_mode_forwards_to_hub_and_handles_takeover(service, monkeypatch):
+    from dataclasses import replace
+
+    client, gateway, _ = service
+    monkeypatch.setattr(gateway, "settings", replace(gateway.settings, website_login_mode="sandbox"))
+    agent = {"Authorization": f"Bearer {gateway.manager.get('root').model_token}"}
+    target = "https://mail.example.com/login"
+    assert client.post(f"{API}/requests/sbx_fill", json={"login_url": target}, headers=agent).json() == {"status": "pending"}
+    form = client.get(f"/u/root{API}/sbx_fill").json()["form_url"]
+    _authenticate(client, form)
+
+    captured = []
+
+    async def fake_post(url, **kwargs):
+        captured.append((url, kwargs))
+        return httpx.Response(200, json={"status": "needs-takeover"})
+
+    monkeypatch.setattr(client.app.state.sandbox_http, "post", fake_post)
+    res = client.post(form, data={"action": "submit", "username": "u@example.com", "password": "pw", "save": "1"}, headers=ORIGIN)
+    assert res.status_code == 200 and "远程浏览器" in res.text
+    assert captured and captured[0][0].endswith("/_internal/website-fill")
+    assert captured[0][1]["json"]["origin"] == "https://mail.example.com"
+    assert gateway.db.website_credentials(gateway.db.get_user_by_name("root").id)
+    assert client.get(f"{API}/requests/sbx_fill", headers=agent).json() == {"status": "failed", "reason": "needs-takeover"}
