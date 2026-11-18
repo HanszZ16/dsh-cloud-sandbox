@@ -3,6 +3,7 @@ name: dsh-website-login-local
 services:
   proxy:
     image: caddy:2-alpine
+    restart: unless-stopped
     environment:
       DSH_WEBSITE_LOGIN_GATEWAY_PORT: ${DSH_WEBSITE_LOGIN_GATEWAY_PORT:-8000}
     labels:
@@ -12,6 +13,7 @@ services:
 
   fixture:
     image: python:3.13-alpine
+    restart: unless-stopped
     labels:
       dev.orbstack.domains: dsh-signin-fixture.local@8080
     command: ["python", "-B", "/fixture.py"]
