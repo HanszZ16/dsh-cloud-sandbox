@@ -288,7 +288,7 @@ The E2B backend treats the image reference as a template id and does not check l
 
 > The full guide (usage, implementation, deployment, limits, troubleshooting) is in [docs/browser-preview.md](docs/browser-preview.md).
 
-Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP, and the user sees it live in the "Remote browser" tab of dsh's right sidebar ("远程浏览器" in Chinese, following dsh's language setting), where they can click, type (including Chinese), switch tabs, and navigate at any time, for example to complete a sign-in for the agent. The tab opens by itself (expanding a collapsed sidebar) when the agent starts operating the browser.
+Each workspace has one long-lived Chromium, and the agent and the user operate **the same browser**: the agent drives it through Playwright MCP in the background, and the user can watch or take over at any time in the "Remote browser" tab of dsh's right sidebar ("远程浏览器" in Chinese, following dsh's language setting), where they can click, type (including Chinese), switch tabs, and navigate. The tab opens automatically (expanding a collapsed sidebar) when human verification or takeover (CAPTCHA, slider, QR/2FA) is needed.
 
 ```
 Sandbox
@@ -316,7 +316,7 @@ dsh      bundle dsh-cloud-workspace-browser: a dsh-mcp-client row (serverName br
 
 ## Secure website sign-in and password vault
 
-The optional Secure Sign-in plugin lets the agent request a login for a public HTTPS sign-in page without prior site configuration. The inline form receives passwords on a separate HTTPS origin. Manage saved logins in DSH Settings → Vault. See the [setup and supported login flows](docs/website-login.md).
+The Secure Sign-in plugin lets the agent request credentials for any HTTPS sign-in page without prior site configuration. The inline form runs on a separate Vault HTTPS origin, using a one-time SSO ticket so signed-in DSH users do not need to log in a second time. Supports both isolated gateway sign-in (`WEBSITE_LOGIN_MODE=gateway`) and direct sandbox browser fill (`WEBSITE_LOGIN_MODE=sandbox`, penetrating nested iframes and multi-step forms and automatically opening Remote browser when CAPTCHA/QR/2FA takeover is needed). Manage saved logins in DSH Settings → Vault. See the [setup and supported login flows](docs/website-login.md).
 
 ## Knowledge base (RAG)
 
