@@ -5,8 +5,8 @@ export const inject = ['tools', 'systemPrompt']
 
 const namespace = '/_dsh-cloud/website-login'
 const output = { schema: {}, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] }
-const COOLDOWN_MS = 10 * 60 * 1000
-const COOLDOWN_STATUSES = new Set(['cancelled', 'failed'])
+const COOLDOWN_MS = 30 * 1000
+const COOLDOWN_STATUSES = new Set(['cancelled'])
 
 function targetKey(siteId, loginUrl) {
   if (siteId) return `site:${siteId}`
@@ -48,11 +48,11 @@ export function apply(ctx) {
     })
     const request = ctx.tools.register({
       name: 'request_website_login',
-      description: 'Ask the workspace owner to sign in using the secure card. Supports traditional single-page same-origin password POST forms only (no OAuth, QR code, multi-step login, CAPTCHA, or 2FA). Supply a configured site_id from website_login_sites, or an exact public HTTPS login_url when explicitly asked to sign in. Never request passwords, codes or cookies in chat, and never retry after failed/cancelled/unavailable; instead ask the user to sign in manually in the Remote browser.',
+      description: 'PRIMARY LOGIN TOOL: Pop up the Secure Sign-in Card (backed by the user Password Vault) to fill credentials directly into the sandbox browser. Supports single-page forms, multi-step forms (Gmail), and nested iframes/tab-switching (QQ Mail). Always call this tool FIRST whenever any website needs login—do NOT ask the user to type passwords in Remote browser themselves. Pass the HTTPS login_url (or a configured site_id).',
       parameters: {
         type: 'object', properties: {
-          login_url: { type: 'string', description: 'Exact public HTTPS login page, when there is no configured ID.' },
-          site_id: { type: 'string', description: 'An optional configured site ID, instead of login_url.' },
+          login_url: { type: 'string', description: 'Exact public HTTPS login page URL (e.g. https://wx.mail.qq.com/ or https://accounts.google.com/).' },
+          site_id: { type: 'string', description: 'An optional configured site ID from website_login_sites, instead of login_url.' },
         }, additionalProperties: false,
       },
       output,
@@ -94,7 +94,14 @@ export function apply(ctx) {
   }, 'website-login: tools')
 
   ctx.systemPrompt.section({
-    name: 'tool:website-login', order: 2360, interpolate: false,
-    text: () => 'When a website needs a password, first check website_login_sites for a configured site_id, or call request_website_login with the exact public HTTPS login URL. Do not enter or ask for passwords through chat, browser tools, ask_user_question, or tool arguments. Never claim sign-in succeeded unless the tool reports signed-in. If it returns reason "needs-takeover", credentials were entered in the workspace browser and Remote browser was opened for the user to complete CAPTCHA/QR/2FA—ask the user for an OTP or to finish verification there. If declined, failed, or unavailable, do not retry for that site.',
+    name: 'tool:website-login', order: 100, interpolate: false,
+    text: () => [
+      'MANDATORY WEBSITE LOGIN & VAULT WORKFLOW:',
+      '1. Always operate the sandbox browser (mcp__browser__*) autonomously in the background first. Do NOT tell the user to open Remote browser and log in manually.',
+      '2. Whenever a website needs sign-in (including QQ Mail, Gmail, nested iframes, or multi-step forms), you MUST immediately call `request_website_login` with the HTTPS `login_url` (or `site_id`). This opens the Secure Sign-in Card and uses the user Password Vault so saved credentials are automatically injected into your sandbox browser.',
+      '3. Never claim that iframes or multi-step forms are unsupported by `request_website_login`—the sandbox browser hub handles iframe penetration and tab switching automatically.',
+      '4. If `request_website_login` returns `reason: "needs-takeover"`, the username and password have ALREADY been filled into the sandbox browser, and a secondary challenge (slider CAPTCHA, SMS OTP, or QR confirmation) appeared: first ask the user in chat if they have an SMS/OTP code you can enter, or tell them to complete just the verification step in the automatically opened Remote browser.',
+      '5. Never ask for or accept plaintext passwords in chat. Only stop retrying within the same turn if the user explicitly declined (`cancelled`).',
+    ].join('\n'),
   })
 }
