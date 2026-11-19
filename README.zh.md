@@ -10,6 +10,7 @@
 - **工作空间**：用户感知不到机器。登录后经过一个几秒的加载页，直接进入 dsh；会话、文件、记忆和自己装的插件一直都在。空闲、退出或超过最长时长时，工作空间自动保存并**休眠**（销毁沙箱、释放资源），下次打开时恢复到原来的样子。
 - **管理后台**：管理用户和用户组，按组或按人分配默认插件、MCP 服务和配置补丁，设置资源规格、模型权限、每日配额，查看用量和审计日志。
 - **模型 Key**：团队共享 key 和用户自己的 key 都只保存在网关（用户 key 加密存储），永远不进入沙箱。
+- **DeepSeek Bot 多智能体协同**：内置基于 [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot)（Apache-2.0）深度适配的多智能体模式，自带主智能体、专职 Bot、群聊（`@Bot` / `@all`）、多阶段目标（Goal）督办验收与长期记忆，并与经典 DeepSeek Harness 模式共享网关模型、远程浏览器、知识库、MCP/技能与统一菜单，支持一键双向切换。
 
 沙箱基于 npm 上的官方 `@deepseek-ai/dsh`（`0.2.2-rc.1`），通过 DSH 官方的插件与前端插槽（Client Slots）机制进行扩展，并内置了深度融合的 **DeepSeek Bot** 多智能体协同插件（参考集成自 [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot)，Apache-2.0）。登录页、加载页、账号设置和管理后台由网关提供，复用 dsh Web 的设计变量。
 
@@ -28,7 +29,7 @@
 - [知识库（RAG）](#知识库rag)
 - [上传文件到工作空间](#上传文件到工作空间)
 - [多智能体协同办公](#多智能体协同办公)
-- [协作房间和机器人](#协作房间和机器人)
+- [DeepSeek Bot 多智能体协同](#deepseek-bot-多智能体协同)
 - [MCP 与技能页面](#mcp-与技能页面)
 - [插件、MCP 与配置补丁的下发](#插件mcp-与配置补丁的下发)
 - [用户数据存在哪里](#用户数据存在哪里)
@@ -96,8 +97,11 @@ dsh-cloud-sandbox/
 │   │   ├── defaults.cordis.yml   所有用户的 dsh 补丁：第一个项目在 ~/workspaces，打开右侧边栏浏览器
 │   │   ├── browser-hub/           工作空间浏览器中转服务（Chromium 生命周期、agent 的 CDP 代理、用户的实时画面）
 │   │   ├── workspace-browser/     dsh 组合包 + 右侧边栏插件「远程浏览器」
+│   │   ├── plugins/ds-bot/        DeepSeek Bot 多智能体插件（集成自 Fei2411/DS-Bot，Apache-2.0），与云端网关和 Harness 深度融合
 │   │   ├── plugins/rag-kb/        知识库插件（@puwenhui/dsh-rag-kb 的 fork），装在镜像里
 │   │   ├── plugins/workspace-upload/  文件面板的上传按钮，装在镜像里
+│   │   ├── plugins/workspace-capabilities/  设置里的「MCP 与技能」只读状态页，装在镜像里
+│   │   ├── plugins/website-login/ 安全登录插件，装在镜像里
 │   │   └── provision.py           按 /etc/dsh-cloud/policy.json 为用户安装一次默认插件和 MCP 包
 │   └── variants/
 │       └── data-science/Dockerfile 示例团队镜像：基础镜像 + numpy、pandas、scipy、matplotlib、scikit-learn
@@ -372,16 +376,35 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 
 [启用和试跑步骤、Grok Bot 逆向笔记](docs/agent-teams.zh.md)
 
-## 协作房间和机器人（DeepSeek Bot）
+## DeepSeek Bot 多智能体协同
 
-基础镜像内置了 **DeepSeek Bot** 多智能体协同插件（`sandbox-image/base/plugins/ds-bot`，基于 Apache-2.0 协议的 [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot) 深度适配），并与经典 **DeepSeek Harness** 模式及云端网关完全打通：
+基础镜像内置了 **DeepSeek Bot** 多智能体协同插件（`sandbox-image/base/plugins/ds-bot`，基于 Apache-2.0 协议的 [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot) 深度适配），并与经典 **DeepSeek Harness** 模式及云端网关完全打通。
 
-- **默认主智能体与多智能体群聊**：开箱自带主智能体，支持创建带独立形象与记忆的专职 Bot、拉群聊（`@成员` / `@all`）、多阶段目标（Goal）拆解与打回验收、侧边栏分组归类。
-- **双模式无缝切换与统一体验**：DeepSeek Bot 与 DeepSeek Harness 共享完全一致的左下角账户菜单（账号设置、管理后台、用量、模型和 API Key、连接器、自动化任务、设置、模式切换、退出登录）、底部对称切换按钮，以及统一的原生 DeepSeek 浅色/深色主题设置；经典模式下自动隐藏内部 Bot 会话区域，保持项目工作区清爽。
-- **共享网关模型、API Key 与管理端策略**：DeepSeek Bot 直接复用网关 `/llm` 代理（`deepseek-official`），实时同步 `/api/me` 云端 Key 状态、执行管理端 `allowed_models` 模型白名单，并自动为新 Bot 继承网关默认模型。
-- **共享云端沙箱能力**：在 DeepSeek Bot 中可直接一键打开云端 **远程浏览器**（`workspace-browser`）、**知识库**（`rag-kb`）、**文件树**（支持上传）和 **终端**；支持 `~/.dsh/skills/*/SKILL.md` 与工作区/管理端 MCP 双向同步；每个 Bot 自动在 `/home/agent/workspaces/<Bot名字>` 下创建专属默认工作目录。
+### 核心功能
+- **主智能体与专职 Bot**：每个用户工作空间开箱自带主智能体，可随时创建不同分工、头像、模型与指令的专职 Bot，并维护持久化的 **Bot 记忆 / 群记忆 / 团队记忆**。
+- **群聊协作与多阶段目标（Goal）**：支持把多个 Bot 拉进群聊，通过 `@成员` 点名或 `@all` 并行调度；支持给群聊设定多阶段目标，自动执行「分配任务 → 汇报 → 打回返工 / 验收通过 → 推进下一阶段」闭环。
+- **侧边栏分组与内嵌 DSH Agent**：支持「新建分组」将 Bot 和群聊拖拽归类；也支持在 DeepSeek Bot 侧边栏直接展开/折叠内嵌的 **DSH Agent** 原生会话列表。
 
-更新已有安装时，先重新构建沙箱镜像（`docker build -t dsh-sandbox:dev sandbox-image/base`），如修改了网关代码则重启网关，再在管理后台重启目标工作空间即可生效。
+### 与云端网关和 DeepSeek Harness 的深度融合
+
+| 融合维度 | 实现说明 |
+|---|---|
+| **API Key、网关模型与管理端策略** | DeepSeek Bot 直接复用网关 `/llm` 代理（`deepseek-official`），自动读取 `/etc/dsh-cloud/policy.json` 执行管理端用户组 `allowed_models` 白名单；模型设置页实时同步 `/api/me` 的真实云端 Key 状态并可一键打开「云端账号设置」；新建 Bot 自动继承网关默认模型。 |
+| **统一账户菜单与双向模式切换** | DeepSeek Bot 与 DeepSeek Harness 共享完全一致的左下角账户菜单（账号设置、管理后台、用量、模型和 API Key、连接器、自动化任务、设置、模式切换、退出登录），底部栏对称提供 `DeepSeek Harness` ⇄ `DeepSeek Bot` 一键切换；经典模式下自动隐藏内部 Bot 会话，保持项目工作区清爽。 |
+| **远程浏览器与知识库打通** | 对话顶部栏提供一键打开 **远程浏览器** 快捷按钮，详情抽屉与右侧栏菜单集成 **远程浏览器**（`workspace-browser`）、**知识库**（`rag-kb`）、**文件树**（含上传）与 **终端**，与经典模式共享同一个云端 Chromium 与本地 RAG 索引。 |
+| **Skills 与 MCP 双向同步** | 在 DeepSeek Bot 中保存/删除的 Skill 自动同步到 `~/.dsh/skills/<name>/SKILL.md`；反之磁盘技能及管理后台下发（`dsh-cloud-mcp-*`）或工作区已装的 MCP 服务器也会自动同步进 DeepSeek Bot 能力库。 |
+| **Bot 专属工作目录与统一原生主题** | 每个 Bot 创建时自动在 `/home/agent/workspaces/<Bot名字>` 下开辟专属默认工作文件夹（下拉菜单自动过滤 `/home/agent` 等受保护目录）；设置页已去除桌面端冗余项，两个模式统一使用 **设置 → 通用 → 外观** 里的 DeepSeek 原生浅色 / 深色 / 跟随系统配色。 |
+
+### 修改 `ds-bot` 前端后的构建与升级
+`sandbox-image/base/plugins/ds-bot/client.js` 由 `src/client/` 通过 `scripts/build-client.mjs` 编译生成：
+
+```sh
+# 1. 修改 src/client/ 后重新编译 client.js（需具备 esbuild 及 ds-bot 依赖）
+node sandbox-image/base/plugins/ds-bot/scripts/build-client.mjs
+
+# 2. 重新构建沙箱镜像，并在管理后台重启对应工作空间
+docker build -t dsh-sandbox:dev sandbox-image/base
+```
 
 ## MCP 与技能页面
 

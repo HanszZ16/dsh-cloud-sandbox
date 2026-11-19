@@ -10,6 +10,7 @@ Gives every account its own **workspace**: an isolated sandbox running a complet
 - **Workspaces**: users never see a machine. After sign-in, a loading page of a few seconds leads straight into dsh, and conversations, files, memory, and the plugins they installed are always there. When idle, on sign-out, or after the maximum lifetime, the workspace is saved and **goes to sleep** (the sandbox is destroyed and its resources released); the next visit restores it exactly as it was.
 - **Admin console**: manage users and groups; assign default plugins, MCP servers, and config patches per group or per user; set resources, allowed models, and daily quotas; view usage and the audit log.
 - **Model keys**: the team's shared key and users' own keys stay on the gateway (user keys encrypted at rest) and never enter a sandbox.
+- **DeepSeek Bot (Multi-agent collaboration)**: built-in multi-agent workspace mode (integrated from [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot), Apache-2.0) with a default Main Bot, specialized Bots, group chats (`@Bot` / `@all`), multi-stage Goal tracking, persistent memory, and one-click switching with classic DeepSeek Harness mode.
 
 Sandboxes use the official npm release of `@deepseek-ai/dsh` (`0.2.2-rc.1`) as their base and extend it through DSH's official plugin and client slot architecture (including the bundled **DeepSeek Bot** multi-agent plugin derived from [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot), Apache-2.0). The gateway serves sign-in, loading, account settings, and admin pages using dsh Web's design tokens.
 
@@ -28,7 +29,7 @@ Sandboxes use the official npm release of `@deepseek-ai/dsh` (`0.2.2-rc.1`) as t
 - [Knowledge base (RAG)](#knowledge-base-rag)
 - [Uploading files into a workspace](#uploading-files-into-a-workspace)
 - [Multi-agent collaboration](#multi-agent-collaboration)
-- [Collaboration rooms and bots](#collaboration-rooms-and-bots)
+- [DeepSeek Bot (Multi-agent collaboration)](#deepseek-bot-multi-agent-collaboration)
 - [MCP and skills page](#mcp-and-skills-page)
 - [Provisioning plugins, MCP servers, and config patches](#provisioning-plugins-mcp-servers-and-config-patches)
 - [Where user data lives](#where-user-data-lives)
@@ -97,8 +98,11 @@ dsh-cloud-sandbox/
 │   │   ├── defaults.cordis.yml   dsh patch for every user: first project in ~/workspaces, right-sidebar Browser on
 │   │   ├── browser-hub/           Workspace browser hub (Chromium lifecycle, the agent's CDP proxy, the user's live view)
 │   │   ├── workspace-browser/     dsh bundle + right-sidebar plugin "Remote browser"
+│   │   ├── plugins/ds-bot/        DeepSeek Bot multi-agent plugin (integrated from Fei2411/DS-Bot, Apache-2.0), deeply unified with the cloud gateway & Harness
 │   │   ├── plugins/rag-kb/        Knowledge base plugin (our fork of @puwenhui/dsh-rag-kb), shipped in the image
 │   │   ├── plugins/workspace-upload/  Upload button in the Files panel, shipped in the image
+│   │   ├── plugins/workspace-capabilities/  Read-only MCP & skills status page in Settings, shipped in the image
+│   │   ├── plugins/website-login/ Secure website sign-in plugin, shipped in the image
 │   │   └── provision.py           Installs default plugins and MCP packages once per user, from /etc/dsh-cloud/policy.json
 │   └── variants/
 │       └── data-science/Dockerfile Example team image: the base plus numpy, pandas, scipy, matplotlib, scikit-learn
@@ -373,16 +377,34 @@ The base image pins dsh `0.2.2-alpha.3`, which includes the experimental **Agent
 
 See the [setup and sample task](docs/agent-teams.zh.md) (Chinese) for a pilot and its limits.
 
-## Collaboration rooms and bots
+## DeepSeek Bot (Multi-agent collaboration)
 
-The image ships **DeepSeek Bot** (`sandbox-image/base/plugins/ds-bot`, integrated from [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot) under Apache-2.0) deeply unified with **DeepSeek Harness** (Classic Agent mode) and the cloud gateway:
+The base image ships **DeepSeek Bot** (`sandbox-image/base/plugins/ds-bot`, integrated from [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot) under Apache-2.0) and deeply unifies it with **DeepSeek Harness** (Classic Agent mode) and the cloud gateway:
 
-- **Default Main Bot & Group Collaboration**: Starts with a Main Bot (`Chief`) that can create specialized Bots, form group chats, delegate tasks, run multi-stage Goals with rework/verification loops, and maintain persistent Bot/group/team memory.
-- **One-click Mode Switching & Unified Chrome**: Both modes share the same bottom-left account menu (`Account settings`, `Admin console`, `Usage`, `Models & API key`, `Connectors`, `Automation tasks`, `Settings`, mode switch, `Sign out`), symmetric footer switchers (`DeepSeek Harness` ⇄ `DeepSeek Bot`), and unified native DeepSeek Light/Dark appearance settings. Classic Agent mode automatically hides internal Bot workspace sessions to keep project workspaces clean.
-- **Shared Gateway Models, Keys & Policies**: DeepSeek Bot uses the gateway `/llm` proxy (`deepseek-official`), enforces group `allowed_models` from `/etc/dsh-cloud/policy.json`, reflects real cloud API key state from `/api/me`, and auto-binds the gateway default model to new Bots.
-- **Shared Cloud Sandbox Capabilities**: Direct access to **Remote browser** (`workspace-browser`), **Knowledge base** (`rag-kb`), **Files** (with upload), and **Terminal** from the header and drawer; bidirectional sync of `~/.dsh/skills/*/SKILL.md` and workspace/admin MCP servers; automatic dedicated working folder (`/home/agent/workspaces/<BotName>`) per Bot.
+### Core capabilities
+- **Main Bot & Specialized Bots**: Every workspace starts with a default Main Bot (`Chief`) that can create specialized Bots with custom avatars, roles, instructions, models, and persistent memory (`Bot` / `Group` / `Team` memory).
+- **Group Chats & Multi-stage Goals**: Create group chats with multiple Bots, address individuals (`@Bot`) or everyone (`@all`), and track multi-stage **Goals** with task assignment, stage-by-stage verification, and rework loops.
+- **Sidebar Sections & Inline DSH Agent**: Organize Bots and group chats into collapsible sections (`New section`), and optionally embed a collapsible **DSH Agent** row for quick plain sessions without leaving DeepSeek Bot.
 
-To upgrade an existing installation, rebuild the sandbox image (`docker build -t dsh-sandbox:dev sandbox-image/base`), restart the gateway if gateway files changed, and restart the target workspaces.
+### Deep integration with DeepSeek Harness & Cloud Gateway
+| Area | How DeepSeek Bot & DeepSeek Harness stay unified |
+|---|---|
+| **API Keys & Gateway Models** | DeepSeek Bot uses the gateway `/llm` proxy (`deepseek-official`), enforces group `allowed_models` from `/etc/dsh-cloud/policy.json`, reads live key status from `/api/me` (never falsely reporting key configured when cloud keys are unset), and auto-binds the gateway default model to `Chief` and new Bots. |
+| **Unified Chrome & Mode Switching** | Both modes share the exact same bottom-left account menu (`Account settings`, `Admin console`, `Usage`, `Models & API keys`, `Connectors`, `Automation tasks`, `Settings`, mode switch, `Sign out`) and symmetric footer switch buttons (`DeepSeek Harness` ⇄ `DeepSeek Bot`). Classic Agent mode automatically hides internal Bot workspace sessions from its sidebar. |
+| **Remote Browser & Knowledge Base** | Quick-access **Remote browser** button in the conversation header plus `Remote browser`, `Knowledge base`, `Files`, and `Terminal` in the details drawer and right-sidebar strip, sharing the same Chromium hub and RAG index as Classic mode. |
+| **Skills & MCP Sync** | Bidirectional sync between DS Bot capabilities and `~/.dsh/skills/*/SKILL.md`, plus automatic import of workspace and Admin Console (`dsh-cloud-mcp-*`) MCP servers from `loader.entries()`. |
+| **Dedicated Bot Folders & Unified Theme** | Every Bot automatically receives a dedicated working folder under `/home/agent/workspaces/<BotName>` (filtering out guarded directories like `/home/agent`). Both modes share the single native DeepSeek Light / Dark / System appearance setting under **Settings → General → Appearance**. |
+
+### Rebuilding `ds-bot` after editing its client UI
+`sandbox-image/base/plugins/ds-bot/client.js` is bundled from `src/client/` via `scripts/build-client.mjs`:
+
+```sh
+# 1. Rebuild the client bundle (requires esbuild and ds-bot's dependencies installed)
+node sandbox-image/base/plugins/ds-bot/scripts/build-client.mjs
+
+# 2. Rebuild the sandbox image and restart active workspaces in /admin
+docker build -t dsh-sandbox:dev sandbox-image/base
+```
 
 ## MCP and skills page
 
