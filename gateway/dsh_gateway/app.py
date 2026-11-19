@@ -223,9 +223,9 @@ def create_app(settings: Settings | None = None, backend: SandboxBackend | None 
         key = gw.user_api_key(user)
         if key is None:
             if not group.get("allow_shared_key"):
-                return _llm_error(403, "no API key: set your DeepSeek API key in account settings (avatar menu, bottom right)")
+                return _llm_error(403, "no API key: set your DeepSeek API key in account settings (avatar menu, bottom left)")
             if not settings.deepseek_api_key:
-                return _llm_error(503, "no shared API key is configured; set your own key in account settings (avatar menu, bottom right)")
+                return _llm_error(503, "no shared API key is configured; set your own key in account settings (avatar menu, bottom left)")
             key = settings.deepseek_api_key
         meter = None
         if request.method == "POST" and path.rstrip("/").endswith(_METERED_SUFFIXES):

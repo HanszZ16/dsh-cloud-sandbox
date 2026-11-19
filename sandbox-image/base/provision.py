@@ -198,6 +198,9 @@ def install_bundle(key: str, spec: str) -> bool:
         if not unlink_renamed(spec):
             return False
         if is_linked(spec):
+            name = read_json(Path(spec[len("link:"):]) / "package.json", {}).get("name")
+            if name and is_bundle(str(name)):
+                select_bundle(str(name))
             return True
     before = dependencies()
     log(f"installing {spec} ({key})")
@@ -247,18 +250,62 @@ def wait_for_dsh(host: str, port: int) -> bool:
     return False
 
 
+def clean_legacy_profile() -> None:
+    """Remove obsolete or missing image-linked plugins and repair stale DSH runtime pins on existing volumes."""
+    manifest_path = PROFILE / "package.json"
+    if not manifest_path.is_file():
+        return
+    manifest = read_json(manifest_path, {})
+    changed = False
+    deps = manifest.get("dependencies")
+    bundles = manifest.get("dsh", {}).get("profile", {}).get("bundles")
+    to_remove = ["dsh-cloud-workspace-rooms"]
+    if isinstance(deps, dict):
+        for pkg, spec in list(deps.items()):
+            if isinstance(spec, str) and spec.startswith("link:"):
+                target = Path(spec[len("link:"):])
+                if not (target / "package.json").is_file() and pkg not in to_remove:
+                    to_remove.append(pkg)
+    for pkg in to_remove:
+        if isinstance(deps, dict) and pkg in deps:
+            del deps[pkg]
+            changed = True
+        if isinstance(bundles, list) and pkg in bundles:
+            bundles.remove(pkg)
+            changed = True
+        old_link = PROFILE / "node_modules" / pkg
+        if old_link.is_symlink() or old_link.is_file():
+            old_link.unlink()
+        elif old_link.is_dir():
+            shutil.rmtree(old_link)
+    if changed:
+        write_json(manifest_path, manifest)
+    doctor = Path("/usr/local/lib/dsh-cloud/plugins/ds-bot/bin/ds-bot-doctor.mjs")
+    if doctor.is_file():
+        run(["node", str(doctor), "doctor", "--fix"], "ds-bot-doctor", INSTALL_TIMEOUT_S)
+
+
 def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     policy = read_json(POLICY, {})
     record = read_json(RECORD, {"done": {}})
-    bundles = policy.get("bundles", [])
+    bundles = [
+        {"key": "ds-bot", "spec": "link:/usr/local/lib/dsh-cloud/plugins/ds-bot"}
+        if b.get("key") == "workspace-rooms" else b
+        for b in policy.get("bundles", [])
+    ]
+    builtin_ds_bot = {"key": "ds-bot", "spec": "link:/usr/local/lib/dsh-cloud/plugins/ds-bot"}
+    if not any(b.get("key") == "ds-bot" for b in bundles):
+        bundles.append(builtin_ds_bot)
     local = [b for b in bundles if b["spec"].startswith(("file:", "link:"))]
     if mode == "npm":
+        clean_legacy_profile()
         for bundle in local:
             if bundle["spec"].startswith("link:"):
                 link_shared_caches(bundle["spec"])
         for bundle in local:
-            if record["done"].get(bundle["key"]) != revision(bundle["spec"]) and install_bundle(bundle["key"], bundle["spec"]):
+            needs_install = record["done"].get(bundle["key"]) != revision(bundle["spec"]) or bundle["spec"].startswith("link:")
+            if needs_install and install_bundle(bundle["key"], bundle["spec"]):
                 record["done"][bundle["key"]] = revision(bundle["spec"])
                 write_json(RECORD, record)
         entries, prefix, installer = policy.get("npm", []), "npm:", install_npm

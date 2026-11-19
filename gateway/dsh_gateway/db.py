@@ -146,9 +146,9 @@ BUILTIN_PLUGINS = (
     {
         "key": "workspace-rooms",
         "kind": "bundle",
-        "name": "协作房间",
-        "description": "在工作空间创建房间和具名机器人，点名委派并在同一时间线查看回复",
-        "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/workspace-rooms"},
+        "name": "DS Bot 智能体团队",
+        "description": "DS Bot 多智能体协同：默认主智能体 Chief、长期记忆、具名专职 Bot、群聊及多阶段目标（Goal）督办验收",
+        "config": {"spec": "link:/usr/local/lib/dsh-cloud/plugins/ds-bot"},
         "since": 6,
     },
 )

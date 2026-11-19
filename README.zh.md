@@ -11,7 +11,7 @@
 - **管理后台**：管理用户和用户组，按组或按人分配默认插件、MCP 服务和配置补丁，设置资源规格、模型权限、每日配额，查看用量和审计日志。
 - **模型 Key**：团队共享 key 和用户自己的 key 都只保存在网关（用户 key 加密存储），永远不进入沙箱。
 
-沙箱基于 npm 上的官方 `@deepseek-ai/dsh`。镜像构建时会修改锁定版本的原生 Chat、Conversation、Sidebar、Workspace 和 Right Sidebar 前端模块，复用原生聊天组件和两侧栏。登录页、加载页、账号设置和管理后台由网关提供，复用 dsh Web 的设计变量。
+沙箱基于 npm 上的官方 `@deepseek-ai/dsh`（`0.2.2-rc.1`），通过 DSH 官方的插件与前端插槽（Client Slots）机制进行扩展，并内置了深度融合的 **DeepSeek Bot** 多智能体协同插件（参考集成自 [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot)，Apache-2.0）。登录页、加载页、账号设置和管理后台由网关提供，复用 dsh Web 的设计变量。
 
 > 状态：PoC。Docker 后端已端到端验证（登录、加载页、账号设置、管理后台、插件和 MCP 下发、对话、退出保存、休眠与恢复、重启、孤儿回收）；OpenSandbox 后端（试验）已在 OpenSandbox 的 Docker 运行时上端到端验证；E2B 后端已实现但**未用真实 key 验证**。
 
@@ -169,7 +169,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-当前镜像锁定 dsh `0.2.2-alpha.3`。升级 dsh 时需同时更新并测试 `sandbox-image/base/dsh-native` 中的原生前端补丁；构建会拒绝不匹配的发布包。dsh 0.2.2 要求 Node.js 24.9 以上，镜像用的是 Node.js 24.22.1。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
+当前镜像内置 `@deepseek-ai/dsh@0.2.2-rc.1` 以支持 DeepSeek Bot，并将 `ds-bot`、`website-login`、`rag-kb`、`workspace-upload`、`workspace-capabilities`、`workspace-browser` 直接随镜像离线打包。dsh 0.2.2 要求 Node.js 24.9 以上，镜像用的是 Node.js 24.22.1。基础镜像约 2.6 GB（Chromium、LibreOffice 和知识库用的 onnxruntime 占了大部分），团队镜像只多出它额外安装的部分。
 
 基础镜像还自带知识库插件和中文向量模型，模型在构建时从 Hugging Face 下载。访问不了 huggingface.co 时，加 `--build-arg HF_ENDPOINT=https://hf-mirror.com`；npm 官方源不稳定时，加 `--build-arg NPM_REGISTRY=https://registry.npmmirror.com`（只用于装进镜像的插件）。
 
@@ -372,13 +372,16 @@ dsh   组合包 dsh-cloud-workspace-browser：一行 dsh-mcp-client（serverName
 
 [启用和试跑步骤、Grok Bot 逆向笔记](docs/agent-teams.zh.md)
 
-## 协作房间和机器人
+## 协作房间和机器人（DeepSeek Bot）
 
-点 DSH 左侧的 **对话** 切换到私聊与群聊列表。点列表上方的 **＋** 可创建带头像的 Bot，或勾选 Bot 新建群聊。私聊直接发消息；群里发 `@调研员 查一下 inputs/ 里的数据` 只会调用调研员，`@all` 会并行调用群里的机器人。每条对话有独立上下文，可以从列表右侧菜单删除。
+基础镜像内置了 **DeepSeek Bot** 多智能体协同插件（`sandbox-image/base/plugins/ds-bot`，基于 Apache-2.0 协议的 [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot) 深度适配），并与经典 **DeepSeek Harness** 模式及云端网关完全打通：
 
-机器人有各自的独立会话，可以从成员菜单打开，查看工具过程、处理原生授权或单独对话。它们和普通工作区会话分开显示。房间内的成员共享项目文件，模型仍使用账号的额度。
+- **默认主智能体与多智能体群聊**：开箱自带主智能体，支持创建带独立形象与记忆的专职 Bot、拉群聊（`@成员` / `@all`）、多阶段目标（Goal）拆解与打回验收、侧边栏分组归类。
+- **双模式无缝切换与统一体验**：DeepSeek Bot 与 DeepSeek Harness 共享完全一致的左下角账户菜单（账号设置、管理后台、用量、模型和 API Key、连接器、自动化任务、设置、模式切换、退出登录）、底部对称切换按钮，以及统一的原生 DeepSeek 浅色/深色主题设置；经典模式下自动隐藏内部 Bot 会话区域，保持项目工作区清爽。
+- **共享网关模型、API Key 与管理端策略**：DeepSeek Bot 直接复用网关 `/llm` 代理（`deepseek-official`），实时同步 `/api/me` 云端 Key 状态、执行管理端 `allowed_models` 模型白名单，并自动为新 Bot 继承网关默认模型。
+- **共享云端沙箱能力**：在 DeepSeek Bot 中可直接一键打开云端 **远程浏览器**（`workspace-browser`）、**知识库**（`rag-kb`）、**文件树**（支持上传）和 **终端**；支持 `~/.dsh/skills/*/SKILL.md` 与工作区/管理端 MCP 双向同步；每个 Bot 自动在 `/home/agent/workspaces/<Bot名字>` 下创建专属默认工作目录。
 
-更新已有安装时，先重新构建使用的沙箱镜像，再重启网关和试点工作空间。插件随镜像提供，网关升级后默认组会收到它；其他组可以在 **管理后台 → 用户组** 分配「协作房间」。[使用步骤与边界](sandbox-image/base/plugins/workspace-rooms/README.md)
+更新已有安装时，先重新构建沙箱镜像（`docker build -t dsh-sandbox:dev sandbox-image/base`），如修改了网关代码则重启网关，再在管理后台重启目标工作空间即可生效。
 
 ## MCP 与技能页面
 

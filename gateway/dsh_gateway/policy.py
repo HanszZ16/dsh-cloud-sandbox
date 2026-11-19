@@ -55,13 +55,16 @@ def build_policy(
         {"key": p["key"], "spec": p["config"]["install"]}
         for p in plugins if p["kind"] == "mcp" and p["config"].get("install")
     ]
+    policy_doc: dict[str, Any] = {"user": user.username, "bundles": bundles, "npm": npm}
+    if group.get("allowed_models"):
+        policy_doc["allowedModels"] = list(group["allowed_models"])
     return SandboxPolicy(
         resources=SandboxResources(mem_limit=group["mem_limit"], cpus=float(group["cpus"])),
         idle_timeout_s=int(group["idle_timeout_s"]),
         max_lifetime_s=int(group["max_lifetime_s"]),
         image=image,
         files={
-            POLICY_PATH: (json.dumps({"user": user.username, "bundles": bundles, "npm": npm}, indent=2) + "\n").encode(),
+            POLICY_PATH: (json.dumps(policy_doc, indent=2) + "\n").encode(),
             OVERLAY_PATH: render_overlay(plugins).encode(),
         },
     )

@@ -11,7 +11,7 @@ Gives every account its own **workspace**: an isolated sandbox running a complet
 - **Admin console**: manage users and groups; assign default plugins, MCP servers, and config patches per group or per user; set resources, allowed models, and daily quotas; view usage and the audit log.
 - **Model keys**: the team's shared key and users' own keys stay on the gateway (user keys encrypted at rest) and never enter a sandbox.
 
-Sandboxes use the official npm release of `@deepseek-ai/dsh` as their base. The image build patches the pinned native Chat, Conversation, Sidebar, Workspace, and Right Sidebar modules so private and group chats can share DSH's chat components and both sidebars. The gateway serves sign-in, loading, account settings, and admin pages using dsh Web's design tokens.
+Sandboxes use the official npm release of `@deepseek-ai/dsh` (`0.2.2-rc.1`) as their base and extend it through DSH's official plugin and client slot architecture (including the bundled **DeepSeek Bot** multi-agent plugin derived from [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot), Apache-2.0). The gateway serves sign-in, loading, account settings, and admin pages using dsh Web's design tokens.
 
 > Status: proof of concept. The Docker backend is verified end to end (sign-in, loading page, account settings, admin console, plugin and MCP provisioning, conversations, save on sign-out, sleep and resume, restart, orphan recovery). The OpenSandbox backend (experimental) is verified end to end on OpenSandbox's Docker runtime. The E2B backend is implemented but **not verified with a real key**.
 
@@ -170,7 +170,7 @@ BUILD_ARGS="--build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   sandbox-image/build.sh
 ```
 
-The image pins dsh `0.2.2-alpha.3`. Update and test the native frontend patch in `sandbox-image/base/dsh-native` when upgrading dsh; the build refuses a mismatched release. Dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1. The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
+The image installs `@deepseek-ai/dsh@0.2.2-rc.1` for DeepSeek Bot support and bundles `ds-bot`, `website-login`, `rag-kb`, `workspace-upload`, `workspace-capabilities`, and `workspace-browser` directly in the image for offline provisioning. Dsh 0.2.2 needs Node.js 24.9 or newer, and the image uses Node.js 24.22.1. The base image is about 2.6 GB (mostly Chromium, LibreOffice, and the knowledge base's onnxruntime); a team image adds only what it installs.
 
 The base image also carries the knowledge base plugin and its Chinese embedding model, which is downloaded from Hugging Face during the build. Where huggingface.co is unreachable, add `--build-arg HF_ENDPOINT=https://hf-mirror.com`; where the npm registry is unreliable, `--build-arg NPM_REGISTRY=https://registry.npmmirror.com` applies to the plugins installed into the image.
 
@@ -375,9 +375,14 @@ See the [setup and sample task](docs/agent-teams.zh.md) (Chinese) for a pilot an
 
 ## Collaboration rooms and bots
 
-Open **Conversations** in DSH's sidebar to switch between bot direct chats and group chats. Use **+** to create a bot with an avatar or select bots for a new group. Send a message directly in a private chat; in a group, use `@researcher` to ask one bot or `@all` to ask every member in parallel. Each conversation keeps its own context and can be deleted from its row menu. Use **View execution session** in the conversation settings for native tool approvals and run details.
+The image ships **DeepSeek Bot** (`sandbox-image/base/plugins/ds-bot`, integrated from [Fei2411/DS-Bot](https://github.com/Fei2411/DS-Bot) under Apache-2.0) deeply unified with **DeepSeek Harness** (Classic Agent mode) and the cloud gateway:
 
-To upgrade an existing installation, rebuild its sandbox image, restart the gateway, then restart the target workspaces. The gateway assigns the bundled plugin to the default group; administrators can assign it to other groups. See the [plugin guide](sandbox-image/base/plugins/workspace-rooms/README.md) for a sample workflow and limits.
+- **Default Main Bot & Group Collaboration**: Starts with a Main Bot (`Chief`) that can create specialized Bots, form group chats, delegate tasks, run multi-stage Goals with rework/verification loops, and maintain persistent Bot/group/team memory.
+- **One-click Mode Switching & Unified Chrome**: Both modes share the same bottom-left account menu (`Account settings`, `Admin console`, `Usage`, `Models & API key`, `Connectors`, `Automation tasks`, `Settings`, mode switch, `Sign out`), symmetric footer switchers (`DeepSeek Harness` ⇄ `DeepSeek Bot`), and unified native DeepSeek Light/Dark appearance settings. Classic Agent mode automatically hides internal Bot workspace sessions to keep project workspaces clean.
+- **Shared Gateway Models, Keys & Policies**: DeepSeek Bot uses the gateway `/llm` proxy (`deepseek-official`), enforces group `allowed_models` from `/etc/dsh-cloud/policy.json`, reflects real cloud API key state from `/api/me`, and auto-binds the gateway default model to new Bots.
+- **Shared Cloud Sandbox Capabilities**: Direct access to **Remote browser** (`workspace-browser`), **Knowledge base** (`rag-kb`), **Files** (with upload), and **Terminal** from the header and drawer; bidirectional sync of `~/.dsh/skills/*/SKILL.md` and workspace/admin MCP servers; automatic dedicated working folder (`/home/agent/workspaces/<BotName>`) per Bot.
+
+To upgrade an existing installation, rebuild the sandbox image (`docker build -t dsh-sandbox:dev sandbox-image/base`), restart the gateway if gateway files changed, and restart the target workspaces.
 
 ## MCP and skills page
 

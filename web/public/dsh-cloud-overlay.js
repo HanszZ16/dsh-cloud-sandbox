@@ -108,14 +108,16 @@
   const errorLine = $('.error')
   let exiting = false
 
-  // Entries in dsh's sidebar "More" menu
+  // Entries in dsh's sidebar "More" menu (works in both Classic Agent mode and DS Bot mode)
   let me = null
-  fetch('/api/me', { credentials: 'same-origin' })
+  const fetchMe = () => fetch('/api/me', { credentials: 'same-origin' })
     .then((response) => (response.ok ? response.json() : null))
     .then((value) => {
       me = value
+      return value
     })
-    .catch(() => undefined)
+    .catch(() => null)
+  void fetchMe()
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     accountLayer.hidden = true
@@ -139,10 +141,14 @@
     signOut: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="M10 16l-4-4 4-4"/><path d="M6 12h10"/>',
   }
 
-  /** The trigger of the sidebar More menu: dsh marks it with its account state. */
-  const moreTrigger = () => document.querySelector('button[aria-haspopup="menu"][data-signed-out][aria-expanded="true"]')
+  /** The trigger of the sidebar More / Account menu in either Classic Agent or DS Bot mode. */
+  const moreTrigger = () => document.querySelector(
+    'button[aria-haspopup="menu"][data-signed-out][aria-expanded="true"], button.bt-account[aria-haspopup="menu"][aria-expanded="true"]',
+  )
 
   function labelOf(item) {
+    const btLabel = item.querySelector('.bt-menu-label')
+    if (btLabel) return btLabel
     const spans = item.querySelectorAll('span')
     return spans.length > 1 ? spans[1] : item
   }
@@ -151,15 +157,25 @@
     const wrapper = template.cloneNode(true)
     wrapper.dataset.dshCloud = 'entry'
     const item = wrapper.querySelector('[role="menuitem"]') || wrapper
-    const iconBox = item.querySelector('span')
-    const size = iconBox?.querySelector('svg')?.getAttribute('width') || '16'
-    if (iconBox) {
-      iconBox.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>`
+    const isBtMenu = item.classList.contains('bt-account-menu') || Boolean(item.querySelector('.bt-menu-label'))
+    if (isBtMenu) {
+      const oldSvg = item.querySelector('svg')
+      const svgHtml = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>`
+      if (oldSvg) oldSvg.outerHTML = svgHtml
+      else item.insertAdjacentHTML('afterbegin', svgHtml)
+      labelOf(item).textContent = label
+      item.querySelectorAll('.bt-menu-hint').forEach((n) => n.remove())
+    } else {
+      const iconBox = item.querySelector('span')
+      const size = iconBox?.querySelector('svg')?.getAttribute('width') || '16'
+      if (iconBox) {
+        iconBox.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>`
+      }
+      labelOf(item).textContent = label
+      item.querySelectorAll('span').forEach((span, index) => {
+        if (index > 1) span.textContent = ''
+      })
     }
-    labelOf(item).textContent = label
-    item.querySelectorAll('span').forEach((span, index) => {
-      if (index > 1) span.textContent = ''
-    })
     item.removeAttribute('aria-disabled')
     item.addEventListener('click', (event) => {
       event.preventDefault()
@@ -244,9 +260,20 @@
   const closeAccount = () => {
     accountLayer.hidden = true
     $('iframe').src = 'about:blank'
+    void fetchMe().then((value) => {
+      window.dispatchEvent(new CustomEvent('dsh-cloud:account-updated', { detail: value }))
+    })
   }
   $('.close').addEventListener('click', closeAccount)
   accountLayer.querySelector('.mask').addEventListener('click', closeAccount)
+
+  window.__dshCloud = {
+    getMe: () => me,
+    fetchMe,
+    openAccount,
+    openSignOut,
+    openAdmin: () => { window.location.href = '/admin' },
+  }
 
   // Sign out: save the workspace with progress, then end the session
   async function api(method, path) {

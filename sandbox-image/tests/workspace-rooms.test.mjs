@@ -1,243 +1,189 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { register } from 'node:module'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout } from 'node:timers/promises'
 import { test } from 'node:test'
-import { nativeRunner } from '../base/plugins/workspace-rooms/index.js'
-import { createRooms } from '../base/plugins/workspace-rooms/rooms.js'
 
-async function fixture(t, run) {
-  const dir = await mkdtemp(join(tmpdir(), 'dsh-room-test-'))
-  const path = join(dir, 'state.json')
-  const projects = () => [{ id: 'project', title: 'Test project' }]
-  const rooms = createRooms({ path, projects, run })
-  t.after(async () => { await rooms.close(); await rm(dir, { recursive: true, force: true }) })
-  const makeBot = async name => {
-    const { room } = await rooms.view()
-    const roomId = room?.kind === 'group' ? room.id : (await rooms.command({ action: 'create-room', title: 'Test group', members: [] })).roomId
-    return (await rooms.command({ action: 'bot', roomId, name })).botId
-  }
-  const send = (roomId, text, requestId = randomUUID()) => rooms.command({ action: 'send', roomId, text, requestId })
-  return { rooms, makeBot, send, path, projects }
+// Stub DSH runtime peer packages when running unit tests directly on the host outside the container.
+register('data:text/javascript,' + encodeURIComponent(`
+const STUBS = {
+  '@deepseek-ai/dsh-llm': 'export const createUserMessage = x => x; export class BlockAssembler {}; export const resolveRetryPolicy = () => ({});',
+  '@deepseek-ai/dsh-tools': 'export const defineTool = x => x;',
+  'deep-view/core': 'export const checkShownView = () => ({}); export const showViewDescription = ""; export const showViewParameters = {}; export const validateViewAnswer = () => ({});',
+};
+export async function resolve(specifier, context, nextResolve) {
+  if (specifier in STUBS) return { url: 'data:text/javascript,' + encodeURIComponent(STUBS[specifier]), shortCircuit: true };
+  return nextResolve(specifier, context);
 }
+`))
 
-async function settled(rooms, id) {
-  for (let i = 0; i < 200; i++) {
-    const { room } = await rooms.view(id)
-    assert.equal(room.id, id)
-    if (!room.messages.some(message => message.status === 'running')) return room
-    await setTimeout(10)
-  }
-  assert.fail('room did not settle')
-}
+const {
+  completeGoal,
+  draftGoal,
+  markTasks,
+  passGoal,
+  reworkGoal,
+  startGoal,
+} = await import('../base/plugins/ds-bot/src/host/goals.js')
+const { name, inject } = await import('../base/plugins/ds-bot/src/host/entry.js')
 
-test('a group deduplicates dispatch, shares history, and separates bot identities', async t => {
-  const calls = []
-  const { rooms, makeBot, send } = await fixture(t, async args => {
-    calls.push(args)
-    if (!args.sessionId) await args.bindSession(randomUUID())
-    return { status: 'done', text: `Evidence from ${args.bot.name}` }
-  })
-  const research = await makeBot('调研员')
-  const review = await makeBot('Reviewer')
-  const first = (await rooms.view()).room.id
-  const id = randomUUID()
-  await send(first, '@all Check sources', id)
-  await send(first, '@all Check sources', id)
-  const original = await settled(rooms, first)
-  assert.deepEqual(calls.map(call => call.bot.name), ['调研员', 'reviewer'])
-  assert.equal(original.messages.length, 3)
-  assert.notEqual(original.sessions[research], original.sessions[review])
-  const originalColors = new Map(original.messages.filter(message => message.kind === 'bot').map(message => [message.botId, message.color]))
-  assert.equal(new Set(originalColors.values()).size, 2)
-  await send(first, '@Reviewer 根据前面的证据复核')
-  await settled(rooms, first)
-  assert.equal(calls.at(-1).sessionId, original.sessions[review])
-  assert.match(calls.at(-1).prompt, /Evidence from 调研员/)
-  await send(first, '联系 hello@example.com')
-  assert.equal(calls.length, 3)
-  await rooms.command({ action: 'bot-delete', roomId: first, botId: review })
-  await assert.rejects(send(first, '@reviewer 复核'), { code: 'unknown-mention' })
-  const reviewReplies = (await rooms.view()).room.messages.filter(message => message.botId === review)
-  assert.equal(reviewReplies.length, 2)
-  assert.ok(reviewReplies.every(message => message.color === originalColors.get(review)))
-  assert.ok((await rooms.sessionIds()).includes(original.sessions[review]))
-  const replacement = await makeBot('Reviewer')
-  assert.notEqual(replacement, review)
-  await send(first, '@reviewer 继续')
-  const next = await settled(rooms, first)
-  assert.notEqual(next.sessions[replacement], original.sessions[review])
-  assert.notEqual(next.messages.at(-1).color, originalColors.get(review))
-  await assert.rejects(rooms.command({ action: 'room', title: 'Second room' }), { code: 'invalid-action' })
+const PLUGIN_DIR = join(import.meta.dirname, '..', 'base', 'plugins', 'ds-bot')
+
+test('ds-bot plugin manifest and cordis bundle patch are properly configured for dsh-cloud-sandbox', async () => {
+  assert.equal(name, 'ds-bot')
+  assert.ok(inject.includes('sessionController'))
+  assert.ok(inject.includes('workspaceRegistry'))
+
+  const pkg = JSON.parse(await readFile(join(PLUGIN_DIR, 'package.json'), 'utf8'))
+  assert.equal(pkg.name, 'ds-bot')
+  assert.equal(pkg.dsh?.client?.platform, 'web')
+  assert.equal(pkg.dsh?.bundle?.patch, './cordis.patch.yml')
+  // Peer dependencies are resolved from the global DSH installation in the container image
+  assert.equal(pkg.peerDependencies, undefined)
+
+  const defaults = await readFile(join(import.meta.dirname, '..', 'base', 'defaults.cordis.yml'), 'utf8')
+  assert.match(defaults, /- id: bot/)
+  assert.match(defaults, /workspace: \/home\/agent\/workspaces/)
 })
 
-test('the room keeps one hidden sidebar session per project context without dispatching bots', async t => {
-  const { path } = await fixture(t, () => assert.fail('opening the sidebar must not run a model'))
-  const created = []
-  const options = {
-    path,
-    projects: () => [{ id: 'first' }, { id: 'second' }],
-    run: () => assert.fail('opening the sidebar must not run a model'),
-    createSidebarSession: async project => {
-      const sessionId = `session-dsh-room-sidebar-${project}`
-      created.push(project)
-      return sessionId
+test('ds-bot group goal lifecycle supports stage assignment, rework whipping, and stage-by-stage verification', () => {
+  const members = new Map([
+    ['chief', { id: 'bot-chief', name: 'Chief' }],
+    ['coder', { id: 'bot-coder', name: 'Coder' }],
+    ['qa', { id: 'bot-qa', name: 'QA' }],
+  ])
+  const memberOf = ref => members.get(String(ref).toLowerCase())
+  const memberNames = ['Chief', 'Coder', 'QA']
+  const room = { id: 'room-1', name: 'Auth Refactor', members: ['bot-chief', 'bot-coder', 'bot-qa'], admin: 'bot-chief' }
+
+  // 1. Draft goal
+  const drafted = draftGoal(room, { brief: 'Refactor auth and add rate limiting tests', by: 'user' }, 1000)
+  assert.equal(drafted.error, undefined)
+  assert.equal(room.goal.status, 'drafting')
+
+  // 2. Start goal with 2 stages
+  const started = startGoal(room, {
+    title: 'Auth Rate Limiting',
+    objective: 'Implement rate limiting and pass unit tests',
+    acceptance: 'All rate-limit unit tests pass',
+    constraints: ['No external Redis dependency'],
+    stages: [
+      {
+        title: 'Stage 1: Implementation',
+        acceptance: 'Middleware written in auth.py',
+        tasks: [{ bot: 'Coder', task: 'Implement token bucket rate limiter in auth.py' }],
+      },
+      {
+        title: 'Stage 2: Verification',
+        acceptance: 'pytest passes 100%',
+        tasks: [{ bot: 'QA', task: 'Write and execute unit tests for rate limiting' }],
+      },
+    ],
+  }, 'bot-chief', memberOf, memberNames, 2000)
+  assert.equal(started.error, undefined)
+  assert.equal(room.goal.status, 'active')
+  assert.equal(room.goal.current, 0)
+
+  // 3. Coder works and reports, but Chief rejects/reworks Stage 1 ("鞭策打回")
+  assert.equal(markTasks(room, 'bot-coder', 'pending', 'working', undefined, 2100), true)
+  assert.equal(markTasks(room, 'bot-coder', 'working', 'reported', undefined, 2200), true)
+  const reworked = reworkGoal(room, {
+    reason: 'Missing concurrency lock and no actual file diff in auth.py',
+    bot: 'Coder',
+  }, 'bot-chief', memberOf, memberNames, 2300)
+  assert.equal(reworked.error, undefined)
+  assert.equal(room.goal.stages[0].reworks, 1)
+  assert.equal(room.goal.stages[0].tasks[0].status, 'pending')
+
+  // 4. Coder reworks and Stage 1 passes -> automatically advances to Stage 2 (QA)
+  const passed1 = passGoal(room, { evidence: 'auth.py updated with thread-safe token bucket' }, 'bot-chief', 2500)
+  assert.equal(passed1.error, undefined)
+  assert.equal(room.goal.current, 1)
+  assert.equal(room.goal.stages[0].status, 'passed')
+  assert.equal(room.goal.stages[1].status, 'active')
+
+  // 5. Stage 2 passes and Chief completes the overall goal
+  const passed2 = passGoal(room, { evidence: 'pytest 14 passed in 0.3s' }, 'bot-chief', 2700)
+  assert.equal(passed2.error, undefined)
+  const completed = completeGoal(room, {
+    evidence: 'auth.py modified and 14 unit tests passing',
+    summary: 'Rate limiting implemented and verified by Coder and QA.',
+  }, 'bot-chief', 3000)
+  assert.equal(completed.error, undefined)
+  assert.equal(room.goal.status, 'complete')
+})
+
+test('ds-bot capabilities sync ~/.dsh/skills and Admin Console dsh-cloud-mcp-* entries bidirectionally', async () => {
+  const { install: installCapabilities } = await import('../base/plugins/ds-bot/src/host/capabilities.js')
+  const tempRoot = join(tmpdir(), `ds-bot-cap-test-${Date.now()}`)
+  const dshHome = join(tempRoot, '.dsh')
+  await mkdir(join(dshHome, 'skills', 'code-review'), { recursive: true })
+  await writeFile(
+    join(dshHome, 'skills', 'code-review', 'SKILL.md'),
+    '---\nname: code-review\ndescription: "Automated code review skill"\n---\n\nAlways check edge cases.\n',
+    'utf8',
+  )
+
+  const state = { bots: { chief: { id: 'chief', name: 'Chief', capabilities: [] } }, capabilities: { items: {} } }
+  const loaderEntries = [
+    {
+      id: 'dsh-cloud-mcp-github-ent',
+      options: {
+        id: 'dsh-cloud-mcp-github-ent',
+        name: '@deepseek-ai/dsh-mcp-client',
+        config: {
+          serverName: 'github-ent',
+          transport: 'streamable-http',
+          url: 'https://mcp.internal.example/sse',
+          headers: { Authorization: 'Bearer test' },
+        },
+      },
     },
-  }
-  const rooms = createRooms(options)
-  t.after(() => rooms.close())
-  await rooms.command({ action: 'create-room', title: 'Dock test', members: [] })
-  const [{ room }, another] = await Promise.all([rooms.view(), rooms.view()])
-  assert.equal(room.sidebarSessionId, 'session-dsh-room-sidebar-first')
-  assert.equal(another.room.sidebarSessionId, room.sidebarSessionId)
-  assert.deepEqual(await rooms.sessionIds(), [room.sidebarSessionId])
-  await rooms.close()
-  const reopened = createRooms(options)
-  t.after(() => reopened.close())
-  assert.equal((await reopened.view()).room.sidebarSessionId, room.sidebarSessionId)
-  await reopened.command({ action: 'project', roomId: room.id, workspaceId: 'second' })
-  const { room: switched } = await reopened.view()
-  assert.equal(switched.sidebarSessionId, 'session-dsh-room-sidebar-second')
-  assert.deepEqual(created, ['first', 'second'])
-  assert.deepEqual(await reopened.sessionIds(), [room.sidebarSessionId, switched.sidebarSessionId])
-})
-
-test('starting a fresh context preserves the timeline and starts new bot sessions without replaying old room history', async t => {
-  const calls = []
-  const { rooms, makeBot, send } = await fixture(t, async args => {
-    calls.push(args)
-    await args.bindSession(randomUUID())
-    return { status: 'done', text: `Result for context ${args.room.contextEpoch ?? 0}` }
-  })
-  const bot = await makeBot('reviewer')
-  const id = (await rooms.view()).room.id
-  await send(id, '@reviewer OLD_CONTEXT')
-  const original = await settled(rooms, id)
-  await rooms.command({ action: 'reset-context', roomId: id, expectedEpoch: 0 })
-  const { room } = await rooms.view()
-  assert.equal(room.contextEpoch, 1)
-  assert.deepEqual(room.messages, original.messages)
-  assert.deepEqual(room.members, original.members)
-  assert.deepEqual(room.sessions, {})
-  assert.ok((await rooms.sessionIds()).includes(original.sessions[bot]))
-  await assert.rejects(rooms.command({ action: 'reset-context', roomId: id, expectedEpoch: 0 }), { code: 'context-changed' })
-  await send(id, '@reviewer NEW_CONTEXT')
-  const fresh = await settled(rooms, id)
-  assert.equal(calls[1].sessionId, undefined)
-  assert.doesNotMatch(calls[1].prompt, /OLD_CONTEXT|Result for context 0/)
-  assert.match(calls[1].prompt, /NEW_CONTEXT/)
-  assert.notEqual(fresh.sessions[bot], original.sessions[bot])
-})
-
-test('stop only cancels the active dispatch and recovery never redispatches interrupted work', async t => {
-  const { rooms, makeBot, send, path, projects } = await fixture(t, async ({ signal }) => {
-    signal.throwIfAborted()
-    await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
-  })
-  await makeBot('worker')
-  const roomId = (await rooms.view()).room.id
-  await send(roomId, '@worker do work')
-  await assert.rejects(send(roomId, '@worker duplicate work'), { code: 'room-busy' })
-  await assert.rejects(rooms.command({ action: 'reset-context', roomId, expectedEpoch: 0 }), { code: 'room-busy' })
-  const crashState = await readFile(path)
-  await rooms.command({ action: 'stop', roomId })
-  assert.equal((await settled(rooms, roomId)).messages.at(-1).status, 'stopped')
-
-  const restoredPath = `${path}.restored`
-  await writeFile(restoredPath, crashState)
-  let dispatched = false
-  const restored = createRooms({ path: restoredPath, projects, run: async () => { dispatched = true } })
-  t.after(() => restored.close())
-  const snapshot = await restored.view()
-  assert.equal(snapshot.room.messages.at(-1).status, 'interrupted')
-  assert.equal(snapshot.room.messages[0].text, '@worker do work')
-  assert.equal(dispatched, false)
-})
-
-test('v1 migration keeps the latest room visible and all archived chats out of the workspace list', async t => {
-  const { rooms, path } = await fixture(t, () => assert.fail('migration must not run a model'))
-  const legacyRoom = (id, at) => ({
-    id, title: id, workspaceId: 'project', members: [], sessions: { bot: `session-${id}` },
-    messages: [{ id: `message-${id}`, kind: 'bot', status: 'running', text: '', at }],
-  })
-  await writeFile(path, JSON.stringify({ version: 1, bots: [], rooms: [legacyRoom('older', 1), legacyRoom('recent', 2)] }))
-  const { room } = await rooms.view()
-  assert.equal(room.id, 'recent')
-  assert.equal(room.messages[0].status, 'interrupted')
-  assert.deepEqual(await rooms.sessionIds(), ['session-recent', 'session-older'])
-  const migrated = JSON.parse(await readFile(path))
-  assert.equal(migrated.version, 3)
-  assert.deepEqual(migrated.archivedRooms.map(item => item.id), ['older'])
-  assert.equal(migrated.archivedRooms[0].messages[0].status, 'interrupted')
-})
-
-test('private chat and multiple groups have separate context, and deleting a conversation keeps its bot', async t => {
-  const calls = []
-  const { rooms, send, path, projects } = await fixture(t, async args => {
-    calls.push(args)
-    if (!args.sessionId) await args.bindSession(randomUUID())
-    return { status: 'done', text: args.room.title }
-  })
-  assert.equal((await rooms.view()).room, null)
-  await assert.rejects(rooms.command({ action: 'bot', name: 'reviewer', avatar: 'https://untrusted.invalid' }), { code: 'invalid-field' })
-  const { botId, roomId: direct } = await rooms.command({ action: 'bot', name: 'reviewer', avatar: 'fox' })
-  assert.equal((await rooms.command({ action: 'direct', botId })).roomId, direct)
-  const { roomId: group } = await rooms.command({ action: 'create-room', title: 'Review project', members: [botId] })
-  const { roomId: other } = await rooms.command({ action: 'create-room', title: 'Another project', members: [botId] })
-  await send(group, '@reviewer GROUP_SECRET')
-  const oldGroup = await settled(rooms, group)
-  await send(direct, 'DIRECT_MESSAGE_WITHOUT_MENTION')
-  const oldDirect = await settled(rooms, direct)
-  assert.doesNotMatch(calls.at(-1).prompt, /GROUP_SECRET/)
-  assert.notEqual(oldDirect.sessions[botId], oldGroup.sessions[botId])
-  assert.equal((await rooms.view(other)).room.messages.length, 0)
-  await rooms.command({ action: 'delete-conversation', roomId: direct })
-  assert.ok((await rooms.sessionIds()).includes(oldDirect.sessions[botId]))
-  const snapshot = await rooms.view()
-  assert.equal(snapshot.bots[0].avatar, 'fox')
-  assert.deepEqual(snapshot.conversations.map(row => row.id), [group, other])
-  assert.deepEqual(snapshot.room.messages, oldGroup.messages)
-  const restored = createRooms({ path, projects, run: () => assert.fail('reopening a chat must not run a model') })
-  t.after(() => restored.close())
-  assert.deepEqual((await restored.view()).conversations.map(row => row.id), [group, other])
-  const { roomId: fresh } = await restored.command({ action: 'direct', botId })
-  assert.notEqual(fresh, direct)
-  assert.deepEqual((await restored.view(fresh)).room.messages, [])
-  await restored.command({ action: 'delete-conversation', roomId: group })
-  const remaining = await restored.view(other)
-  assert.deepEqual(remaining.conversations.map(row => row.id), [other, fresh])
-  assert.equal(remaining.bots[0].id, botId)
-})
-
-test('new native bot chats use the selected working directory without joining the project list', async () => {
-  let bound, listener
-  const sessionController = {
-    async create(options) {
-      assert.equal(options.cwd, '/work/project')
-      assert.equal(options.workspaceId, undefined)
-      assert.match(options.sessionId, /^session-dsh-room-/)
-      return { sessionId: options.sessionId }
+  ]
+  const rt = {
+    dshHome,
+    state,
+    ctx: {
+      get: (service) => (service === 'loader' ? { entries: () => loaderEntries } : undefined),
+      on: () => {},
+      effect: () => {},
     },
-    async rename() {},
-    async prompt({ sessionId, requestId }) {
-      assert.equal(sessionId, bound)
-      const session = { id: sessionId }
-      listener(session, { type: 'turn/start', data: { turn: 1 } })
-      listener(session, { type: 'user/message', data: { source: { kind: 'user', rpcId: requestId } } })
-      listener(session, { type: 'assistant/message', data: { turn: 1, message: { content: [{ type: 'text', text: 'Result' }] } } })
-      listener(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
-    },
+    load: async () => {},
+    save: async () => {},
+    loadSecrets: async () => {},
+    readOnly: () => undefined,
+    isMain: () => true,
+    botOf: id => state.bots[id],
+    isBotSession: () => false,
+    warn: () => {},
   }
-  const run = nativeRunner({
-    sessionController,
-    workspaceRegistry: { get: id => id === 'project' ? { path: '/work/project' } : null },
-    agents: { get: () => undefined },
-    on: (_, fn) => { listener = fn; return () => { listener = undefined } },
-  })
-  const result = await run({ room: { workspaceId: 'project' }, bot: { name: 'researcher' },
-    requestId: randomUUID(), prompt: 'Research', bindSession: async id => { bound = id }, signal: new AbortController().signal })
-  assert.deepEqual(result, { status: 'done', text: 'Result' })
-  assert.equal(listener, undefined)
+  installCapabilities(rt)
+
+  try {
+    await rt.reconcileCapabilities()
+    // 1. Existing ~/.dsh/skills/code-review/SKILL.md was imported into state.capabilities.items
+    assert.equal(state.capabilities.items['code-review']?.kind, 'skill')
+    assert.equal(state.capabilities.items['code-review']?.description, 'Automated code review skill')
+    assert.equal(state.capabilities.items['code-review']?.content, 'Always check edge cases.')
+
+    // 2. Admin Console MCP entry dsh-cloud-mcp-github-ent was imported into state.capabilities.items
+    assert.equal(state.capabilities.items['github-ent']?.kind, 'mcp')
+    assert.equal(state.capabilities.items['github-ent']?.transport, 'streamable-http')
+    assert.equal(state.capabilities.items['github-ent']?.url, 'https://mcp.internal.example/sse')
+
+    // 3. Saving a new skill in DS Bot writes ~/.dsh/skills/<name>/SKILL.md for Classic Agent Mode
+    await rt.capabilitySave({
+      name: 'sql-tuning',
+      kind: 'skill',
+      description: 'Optimize SQL queries',
+      content: 'Use EXPLAIN ANALYZE before adding indexes.',
+    }, { ui: true })
+    const written = await readFile(join(dshHome, 'skills', 'sql-tuning', 'SKILL.md'), 'utf8')
+    assert.match(written, /name: sql-tuning/)
+    assert.match(written, /Use EXPLAIN ANALYZE before adding indexes\./)
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true })
+  }
 })
+

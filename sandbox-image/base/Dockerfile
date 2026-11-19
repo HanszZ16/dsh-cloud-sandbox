@@ -69,7 +69,20 @@ COPY plugins/rag-kb /usr/local/lib/dsh-cloud/plugins/rag-kb
 COPY plugins/workspace-upload /usr/local/lib/dsh-cloud/plugins/workspace-upload
 # Settings → MCP & skills; no dependencies, provisioned like workspace-upload.
 COPY plugins/workspace-capabilities /usr/local/lib/dsh-cloud/plugins/workspace-capabilities
-COPY plugins/workspace-rooms /usr/local/lib/dsh-cloud/plugins/workspace-rooms
+# Upgrade DSH to 0.2.2-rc.1 for DS Bot and install DS Bot dependencies after
+# cached base layers so rebuilds stay fast.
+ARG DSH_BOT_HARNESS_VERSION=0.2.2-rc.1
+ARG DSH_BOT_NPM_REGISTRY=https://registry.npmmirror.com
+RUN npm install -g --registry "$DSH_BOT_NPM_REGISTRY" "@deepseek-ai/dsh@${DSH_BOT_HARNESS_VERSION}" \
+ && npm cache clean --force
+COPY plugins/ds-bot/package.json /usr/local/lib/dsh-cloud/plugins/ds-bot/package.json
+RUN cd /usr/local/lib/dsh-cloud/plugins/ds-bot \
+ && npm install --registry "$DSH_BOT_NPM_REGISTRY" --omit=dev --legacy-peer-deps --ignore-scripts --no-package-lock --no-fund --no-audit \
+ && npm cache clean --force \
+ && mkdir -p /usr/local/lib/dsh-cloud/node_modules \
+ && ln -sfn "$(npm root -g)/@deepseek-ai/dsh/node_modules/@deepseek-ai" /usr/local/lib/dsh-cloud/node_modules/@deepseek-ai
+COPY plugins/ds-bot /usr/local/lib/dsh-cloud/plugins/ds-bot
+COPY plugins/website-login /usr/local/lib/dsh-cloud/plugins/website-login
 COPY browser-hub/hub.mjs /usr/local/lib/dsh-cloud/browser-hub/hub.mjs
 # The workspace browser dsh bundle (live-view tab + the Playwright MCP row),
 # provisioned with the spec file:/usr/local/lib/dsh-cloud/workspace-browser;
@@ -78,10 +91,6 @@ COPY workspace-browser /usr/local/lib/dsh-cloud/workspace-browser
 COPY entrypoint.sh /usr/local/bin/dsh-sandbox-entrypoint
 COPY defaults.cordis.yml /usr/local/lib/dsh-cloud/defaults.cordis.yml
 COPY provision.py /usr/local/lib/dsh-cloud/provision.py
-# Room UI is compiled into the installed DSH frontend, not loaded as a
-# workspace-rooms client plugin. Check the upstream bytes before patching.
-COPY dsh-native /usr/local/lib/dsh-cloud/dsh-native
-RUN node /usr/local/lib/dsh-cloud/dsh-native/apply.mjs "$(npm root -g)/@deepseek-ai/dsh"
 # The pnpm content store lives outside /home/agent: installed plugins are
 # persisted through their node_modules copies, not through the cache.
 # Chromium cannot create its own process sandbox inside a container; the
@@ -115,5 +124,5 @@ ENTRYPOINT ["dsh-sandbox-entrypoint"]
 # NODE_IMAGE is re-declared only here so it does not invalidate earlier layers.
 ARG NODE_IMAGE
 LABEL dsh-cloud.contract="1" \
-      dsh-cloud.dsh-version="${DSH_VERSION}" \
+      dsh-cloud.dsh-version="${DSH_BOT_HARNESS_VERSION}" \
       dsh-cloud.runtime="${NODE_IMAGE}"

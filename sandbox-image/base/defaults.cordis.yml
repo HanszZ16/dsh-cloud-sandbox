@@ -14,3 +14,9 @@
 # Web profile turns off by default.
 - id: ui-sidebar-browser
   disabled: false
+# DS Bot team defaults: use the user's persisted workspaces root and disable
+# self-update notifications inside managed sandbox containers.
+- id: bot
+  config:
+    workspace: /home/agent/workspaces
+    updateCheck: false
